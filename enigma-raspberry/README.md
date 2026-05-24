@@ -20,7 +20,14 @@ Backend Python para o Raspberry Pi do projeto Enigma Machine.
 - `GET /state`
 - `POST /config`
 - `GET /message/{payload}`
+- `GET /pending` — payload cifrado enviado pelo Arduino (app em RECEIVING)
 - `POST /outgoing/{plain_text}`
+
+## Arduino por USB Serial
+
+O `main.py` abre automaticamente `/dev/ttyACM0` a 115200 baud e faz ponte com o firmware.
+
+Ver **[CONEXAO_PI.md](CONEXAO_PI.md)** para ligacao completa Arduino + Pi + app mobile.
 
 ## Contrato com o app
 

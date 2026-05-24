@@ -2,7 +2,14 @@ import json
 from pathlib import Path
 from threading import Lock
 
-from enigma.models import HistoryItem, MachineConfig, MachineState, StoredState, TransferRole
+from enigma.models import (
+    HistoryItem,
+    MachineConfig,
+    MachineState,
+    PendingOutgoing,
+    StoredState,
+    TransferRole,
+)
 
 
 class StateStore:
@@ -63,6 +70,50 @@ class StateStore:
     def has_processed(self, message_id: str) -> bool:
         with self._lock:
             return message_id in self._state.processedMessageIds
+
+    def set_pending_outgoing(
+        self,
+        payload: str,
+        message_id: str,
+        plain_text: str,
+    ) -> None:
+        with self._lock:
+            self._state.pendingPayload = payload
+            self._state.pendingMessageId = message_id
+            self._state.pendingPlainText = plain_text
+            self._save()
+
+    def get_pending_outgoing(self) -> PendingOutgoing:
+        with self._lock:
+            if not self._state.pendingPayload:
+                return PendingOutgoing()
+            return PendingOutgoing(
+                available=True,
+                payload=self._state.pendingPayload,
+                messageId=self._state.pendingMessageId,
+                plainText=self._state.pendingPlainText,
+                positions=self._state.config.positions,
+                role=self._state.config.role,
+            )
+
+    def clear_pending_outgoing(self) -> PendingOutgoing:
+        with self._lock:
+            if not self._state.pendingPayload:
+                pending = PendingOutgoing()
+            else:
+                pending = PendingOutgoing(
+                    available=True,
+                    payload=self._state.pendingPayload,
+                    messageId=self._state.pendingMessageId,
+                    plainText=self._state.pendingPlainText,
+                    positions=self._state.config.positions,
+                    role=self._state.config.role,
+                )
+            self._state.pendingPayload = ""
+            self._state.pendingMessageId = ""
+            self._state.pendingPlainText = ""
+            self._save()
+            return pending
 
     def _load(self) -> StoredState:
         if not self.path.exists():

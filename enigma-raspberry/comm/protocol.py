@@ -90,6 +90,41 @@ class MobileProtocol:
             role=next_role,
         )
 
+    def accept_physical_outgoing(self, cipher_payload: str) -> MessageAck:
+        """Payload ja cifrado no Arduino; alinha rotores no Pi e guarda para o app."""
+        clean_payload = sanitize_payload(cipher_payload)
+        if not clean_payload:
+            raise ValueError("PAYLOAD_VAZIO")
+
+        config = self.store.get_config()
+        if config.role != TransferRole.SENDING:
+            raise ValueError("NOT_SENDING")
+
+        plain_text, next_positions = self.machine.process_message(clean_payload, config)
+        message_id = str(uuid4())
+        next_role = complementary_role(config.role)
+        self.store.set_positions_and_role(next_positions, next_role)
+        self.store.set_pending_outgoing(clean_payload, message_id, plain_text)
+        self.store.add_history(
+            HistoryItem(
+                messageId=message_id,
+                direction="sent",
+                payload=clean_payload,
+                plainText=plain_text,
+                positions=next_positions,
+                mode=config.mode,
+            )
+        )
+
+        return MessageAck(
+            status="received",
+            payload=clean_payload,
+            messageId=message_id,
+            plainText=plain_text,
+            positions=next_positions,
+            role=next_role,
+        )
+
 
 def parse_serial_command(command: str) -> tuple[str, list[str]]:
     parts = command.strip().split(":")

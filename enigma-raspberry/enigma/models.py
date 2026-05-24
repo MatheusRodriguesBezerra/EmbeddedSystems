@@ -57,6 +57,15 @@ class MessageAck(BaseModel):
     role: TransferRole
 
 
+class PendingOutgoing(BaseModel):
+    available: bool = False
+    payload: str = ""
+    messageId: str = ""
+    plainText: str = ""
+    positions: tuple[int, int, int] = (0, 0, 0)
+    role: TransferRole = TransferRole.IDLE
+
+
 class HistoryItem(BaseModel):
     messageId: str
     direction: Literal["sent", "received"]
@@ -71,3 +80,6 @@ class StoredState(BaseModel):
     connectedArduino: bool = False
     history: list[HistoryItem] = Field(default_factory=list)
     processedMessageIds: list[str] = Field(default_factory=list)
+    pendingPayload: str = ""
+    pendingMessageId: str = ""
+    pendingPlainText: str = ""
