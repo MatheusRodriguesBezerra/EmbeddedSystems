@@ -15,6 +15,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+
+class _SkipPendingAccessLog(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/pending" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_SkipPendingAccessLog())
+
 store = StateStore(STATE_FILE)
 machine = EnigmaMachine()
 protocol = MobileProtocol(store, machine)

@@ -48,6 +48,11 @@ class PingResponse(BaseModel):
     connectedArduino: bool = False
 
 
+class AppRoleUpdate(BaseModel):
+    """Papel do app mobile; o Pi guarda o complementar."""
+    role: TransferRole
+
+
 class MessageAck(BaseModel):
     status: str = "received"
     payload: str

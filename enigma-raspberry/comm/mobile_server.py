@@ -8,7 +8,14 @@ from comm.protocol import MobileProtocol, config_for_pi_from_app
 from comm.serial_service import SerialService
 from config import APP_NAME
 from enigma.machine import EnigmaMachine
-from enigma.models import MachineConfig, MessageAck, PendingOutgoing, PingResponse
+from enigma.models import (
+    AppRoleUpdate,
+    MachineConfig,
+    MessageAck,
+    PendingOutgoing,
+    PingResponse,
+    TransferRole,
+)
 from state.store import StateStore
 
 logger = logging.getLogger(__name__)
@@ -52,6 +59,18 @@ def create_app(
         updated = store.set_config(pi_config)
         if arduino_handler:
             arduino_handler.push_positions_to_arduino()
+        return updated
+
+    @app.post("/role")
+    def set_app_role(update: AppRoleUpdate):
+        """Atualiza apenas o turno half-duplex, sem alterar posicoes dos rotores."""
+        current = store.get_config()
+        pi_role = update.role
+        if update.role in (TransferRole.SENDING, TransferRole.RECEIVING):
+            pi_role = config_for_pi_from_app(
+                current.model_copy(update={"role": update.role})
+            ).role
+        updated = store.set_config(current.model_copy(update={"role": pi_role}))
         return updated
 
     @app.get("/message/{payload}", response_model=MessageAck)
