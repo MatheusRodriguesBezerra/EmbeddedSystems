@@ -18,6 +18,13 @@ def complementary_role(role: TransferRole) -> TransferRole:
     return TransferRole.IDLE
 
 
+def config_for_pi_from_app(config: MachineConfig) -> MachineConfig:
+    """O body de POST /config traz o role do app; o Pi guarda o complementar."""
+    if config.role in (TransferRole.SENDING, TransferRole.RECEIVING):
+        return config.model_copy(update={"role": complementary_role(config.role)})
+    return config
+
+
 class MobileProtocol:
     def __init__(self, store: StateStore, machine: EnigmaMachine) -> None:
         self.store = store

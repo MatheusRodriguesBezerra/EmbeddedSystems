@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 
 from comm.arduino_handler import ArduinoHandler
-from comm.protocol import MobileProtocol
+from comm.protocol import MobileProtocol, config_for_pi_from_app
 from comm.serial_service import SerialService
 from config import APP_NAME
 from enigma.machine import EnigmaMachine
@@ -48,7 +48,8 @@ def create_app(
 
     @app.post("/config")
     def set_config(config: MachineConfig):
-        updated = store.set_config(config)
+        pi_config = config_for_pi_from_app(config)
+        updated = store.set_config(pi_config)
         if arduino_handler:
             arduino_handler.push_positions_to_arduino()
         return updated
@@ -62,6 +63,7 @@ def create_app(
                 arduino_handler.push_positions_to_arduino()
             return ack
         except ValueError as error:
+            logger.warning("GET /message/%s rejeitado: %s", payload, error)
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post("/outgoing/{plain_text}", response_model=MessageAck)

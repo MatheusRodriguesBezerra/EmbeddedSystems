@@ -35,10 +35,35 @@ O app deve chamar `GET /message/{payload}` apenas quando o Raspberry estiver em 
 
 ## Execução
 
-1. Crie um ambiente virtual Python.
-2. Instale as dependências com `pip install -r requirements.txt`.
-3. Execute o servidor com `python main.py`.
-4. No app mobile, configure o endereço do Raspberry como `IP_DO_RASPBERRY:8000`.
+No Raspberry Pi OS (Debian), **não use** `pip install` no Python do sistema — aparece `externally-managed-environment`. Use um ambiente virtual:
+
+```bash
+cd ~/EmbeddedSystems/enigma-raspberry
+
+# Dependencias do sistema (so na primeira vez)
+sudo apt update
+sudo apt install python3-venv python3-full
+
+# Ambiente virtual (so na primeira vez)
+python3 -m venv .venv
+
+# Ativar o venv (obrigatorio em cada sessao SSH)
+source .venv/bin/activate
+
+# Instalar pacotes dentro do venv
+pip install -r requirements.txt
+
+# Arrancar
+python main.py
+```
+
+O prompt deve mostrar `(.venv)` antes de instalar ou correr o servidor.
+
+No app mobile, configure o endereço do Raspberry como `IP_DO_RASPBERRY:8000`.
+
+### Erro `externally-managed-environment`
+
+Significa que correu `pip install` **fora** do venv. Execute `source .venv/bin/activate` e repita `pip install -r requirements.txt`.
 
 ## Testes
 
