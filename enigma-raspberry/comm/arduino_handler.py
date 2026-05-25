@@ -1,8 +1,7 @@
 import logging
 
-from comm.protocol import MobileProtocol, sanitize_payload
+from comm.protocol import MobileProtocol, parse_slots_csv, sanitize_payload
 from comm.serial_service import SerialService
-from enigma.machine import EnigmaMachine
 from enigma.models import MachineConfig, MachineMode, TransferRole
 from state.store import StateStore
 
@@ -27,12 +26,10 @@ class ArduinoHandler:
     def __init__(
         self,
         store: StateStore,
-        machine: EnigmaMachine,
         protocol: MobileProtocol,
         serial_service: SerialService,
     ) -> None:
         self.store = store
-        self.machine = machine
         self.protocol = protocol
         self.serial = serial_service
 
@@ -53,10 +50,6 @@ class ArduinoHandler:
             self._handle_mode(upper.split(":", 1)[1])
             return
 
-        if upper.startswith("KEY:"):
-            self._handle_key(upper.split(":", 1)[1])
-            return
-
         if upper == "STATUS":
             self._handle_status()
             return
@@ -67,11 +60,20 @@ class ArduinoHandler:
         config = self.store.get_config()
         self.serial.send_line(self._format_cfg(config))
 
+    def push_config_slots_to_arduino(self, config: MachineConfig) -> None:
+        self.serial.send_line(self._format_cfg(config))
+
     def push_cipher_to_arduino(self, cipher: str) -> None:
         clean = sanitize_payload(cipher)
         if not clean:
             return
         self.serial.send_line(f"IN:{clean}")
+
+    def deliver_cipher_to_arduino(self, cipher: str, config_before: MachineConfig) -> None:
+        """Alinha rotores PRE-mensagem, envia IN: e depois pos-posicao."""
+        self.push_config_slots_to_arduino(config_before)
+        self.push_cipher_to_arduino(cipher)
+        self.push_config_to_arduino()
 
     def _handle_sync(self) -> None:
         config = self.store.get_config()
@@ -80,9 +82,10 @@ class ArduinoHandler:
         logger.info("SYNC -> %s", line)
 
     def _handle_send(self, payload: str) -> None:
-        clean = sanitize_payload(payload)
-        if not clean:
-            self.serial.send_line("ERR:PAYLOAD_VAZIO")
+        try:
+            cipher, slots_after = self._parse_send_payload(payload)
+        except ValueError as error:
+            self.serial.send_line(f"ERR:{error}")
             return
 
         config = self.store.get_config()
@@ -92,13 +95,13 @@ class ArduinoHandler:
             return
 
         try:
-            ack = self.protocol.accept_physical_outgoing(clean)
+            ack = self.protocol.relay_cipher_from_arduino(cipher, slots_after)
         except ValueError as error:
             self.serial.send_line(f"ERR:{error}")
             return
 
-        message_id = ack.messageId
-        self.serial.send_line(f"ACK:{message_id}")
+        self.serial.send_line(f"ACK:{ack.messageId}")
+        self.push_config_to_arduino()
         logger.info(
             "SEND fisico aceite payload=%s role=%s",
             ack.payload,
@@ -116,26 +119,29 @@ class ArduinoHandler:
         self.store.set_config(config.model_copy(update={"mode": mode}))
         self.serial.send_line(f"STATUS:MODE:{mode.value}")
 
-    def _handle_key(self, letter: str) -> None:
-        clean = sanitize_payload(letter)[:1]
-        if not clean:
-            return
-
-        config = self.store.get_config()
-        try:
-            output, slots = self.machine.process_message(clean, config)
-        except ValueError as error:
-            self.serial.send_line(f"ERR:{error}")
-            return
-
-        self.store.set_slots_and_role(slots, config.role)
-        self.serial.send_line(f"OUT:{output}")
-        self.serial.send_line(self._format_cfg(self.store.get_config()))
-
     def _handle_status(self) -> None:
         state = self.store.get_machine_state()
-        slot_text = self._format_cfg(MachineConfig(slots=state.slots, mode=state.mode, role=state.role))
+        slot_text = self._format_cfg(
+            MachineConfig(slots=state.slots, mode=state.mode, role=state.role)
+        )
         self.serial.send_line(f"STATUS:{slot_text}:ROLE:{state.role.value}")
+
+    @staticmethod
+    def _parse_send_payload(payload: str) -> tuple[str, list]:
+        clean = payload.strip()
+        if "|" not in clean:
+            raise ValueError("SLOTS_OBRIGATORIOS")
+
+        cipher_text, slots_text = clean.split("|", 1)
+        cipher = sanitize_payload(cipher_text)
+        if not cipher:
+            raise ValueError("PAYLOAD_VAZIO")
+
+        slots_after = parse_slots_csv(slots_text)
+        if not slots_after:
+            raise ValueError("SLOTS_OBRIGATORIOS")
+
+        return cipher, slots_after
 
     @staticmethod
     def _format_cfg(config: MachineConfig) -> str:

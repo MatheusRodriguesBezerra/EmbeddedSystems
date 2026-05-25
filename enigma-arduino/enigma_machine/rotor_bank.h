@@ -4,6 +4,7 @@
 #include "enigma.h"
 
 void rotorFormatLine(const EnigmaConfig &config, char *buf, size_t bufSize);
+void rotorFormatSlotsCsv(const EnigmaConfig &config, char *buf, size_t bufSize);
 int8_t rotorFindSlot(const EnigmaConfig &config, uint8_t rotorId);
 bool rotorToggleSelect(EnigmaConfig &config, uint8_t rotorId);
 void rotorIncrementPending(EnigmaConfig &config, uint8_t rotorId);

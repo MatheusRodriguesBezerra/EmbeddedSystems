@@ -1,22 +1,14 @@
-from enigma.machine import EnigmaMachine
 from enigma.models import MachineConfig, MachineMode
 from state.store import StateStore
 
 
 class SerialBridge:
-    def __init__(self, store: StateStore, machine: EnigmaMachine) -> None:
+    def __init__(self, store: StateStore) -> None:
         self.store = store
-        self.machine = machine
 
     def handle_command(self, command: str) -> str:
         command = command.strip().upper()
         config = self.store.get_config()
-
-        if command.startswith("KEY:"):
-            letter = command.split(":", 1)[1][:1]
-            output, slots = self.machine.process_message(letter, config)
-            self.store.set_slots_and_role(slots, config.role)
-            return f"OUT:{output}"
 
         if command.startswith("MODE:"):
             mode = command.split(":", 1)[1]

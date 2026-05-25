@@ -7,9 +7,9 @@ from comm.arduino_handler import ArduinoHandler
 from comm.protocol import MobileProtocol, config_for_pi_from_app
 from comm.serial_service import SerialService
 from config import APP_NAME
-from enigma.machine import EnigmaMachine
 from enigma.models import (
     AppRoleUpdate,
+    CipherTransfer,
     MachineConfig,
     MessageAck,
     PendingOutgoing,
@@ -23,12 +23,10 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     store: StateStore,
-    machine: EnigmaMachine,
+    protocol: MobileProtocol,
     serial_service: SerialService | None = None,
     arduino_handler: ArduinoHandler | None = None,
 ) -> FastAPI:
-    protocol = MobileProtocol(store, machine)
-
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if serial_service:
@@ -73,27 +71,21 @@ def create_app(
         updated = store.set_config(current.model_copy(update={"role": pi_role}))
         return updated
 
-    @app.get("/message/{payload}", response_model=MessageAck)
-    def receive_message(payload: str, messageId: str | None = Query(default=None)) -> MessageAck:
+    @app.post("/message", response_model=MessageAck)
+    def relay_message(body: CipherTransfer) -> MessageAck:
+        """Recebe payload ja cifrado pelo app mobile e encaminha ao Arduino."""
         try:
-            ack = protocol.receive_payload(payload, messageId)
+            config_before = store.get_config()
+            ack = protocol.relay_cipher_from_mobile(
+                body.payload,
+                body.slots,
+                body.messageId,
+            )
             if arduino_handler:
-                arduino_handler.push_cipher_to_arduino(ack.payload)
-                arduino_handler.push_config_to_arduino()
+                arduino_handler.deliver_cipher_to_arduino(ack.payload, config_before)
             return ack
         except ValueError as error:
-            logger.warning("GET /message/%s rejeitado: %s", payload, error)
-            raise HTTPException(status_code=409, detail=str(error)) from error
-
-    @app.post("/outgoing/{plain_text}", response_model=MessageAck)
-    def build_outgoing_message(plain_text: str) -> MessageAck:
-        try:
-            ack = protocol.build_outgoing_payload(plain_text)
-            if arduino_handler:
-                arduino_handler.push_cipher_to_arduino(ack.payload)
-                arduino_handler.push_config_to_arduino()
-            return ack
-        except ValueError as error:
+            logger.warning("POST /message rejeitado: %s", error)
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/pending", response_model=PendingOutgoing)

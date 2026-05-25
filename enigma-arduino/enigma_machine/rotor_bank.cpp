@@ -5,12 +5,30 @@ void rotorFormatLine(const EnigmaConfig &config, char *buf, size_t bufSize) {
   size_t offset = 0;
 
   for (uint8_t i = 0; i < config.slotCount; i++) {
-  if (offset >= bufSize - 1) break;
+    if (offset >= bufSize - 1) break;
     int written = snprintf(
         buf + offset,
         bufSize - offset,
         "%s%u:%u",
         (i == 0) ? "" : " ",
+        config.slotRotor[i],
+        config.slotPos[i]);
+    if (written < 0) break;
+    offset += (size_t)written;
+  }
+}
+
+void rotorFormatSlotsCsv(const EnigmaConfig &config, char *buf, size_t bufSize) {
+  buf[0] = '\0';
+  size_t offset = 0;
+
+  for (uint8_t i = 0; i < config.slotCount; i++) {
+    if (offset >= bufSize - 1) break;
+    int written = snprintf(
+        buf + offset,
+        bufSize - offset,
+        "%s%u,%u",
+        (i == 0) ? "" : ",",
         config.slotRotor[i],
         config.slotPos[i]);
     if (written < 0) break;

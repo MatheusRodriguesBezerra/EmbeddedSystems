@@ -7,7 +7,6 @@ from comm.mobile_server import create_app
 from comm.protocol import MobileProtocol
 from comm.serial_service import SerialService
 from config import HOST, PORT, SERIAL_BAUD, SERIAL_ENABLED, SERIAL_PORT, STATE_FILE
-from enigma.machine import EnigmaMachine
 from state.store import StateStore
 
 logging.basicConfig(
@@ -24,8 +23,7 @@ class _SkipPendingAccessLog(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_SkipPendingAccessLog())
 
 store = StateStore(STATE_FILE)
-machine = EnigmaMachine()
-protocol = MobileProtocol(store, machine)
+protocol = MobileProtocol(store)
 
 serial_service: SerialService | None = None
 arduino_handler: ArduinoHandler | None = None
@@ -37,9 +35,9 @@ if SERIAL_ENABLED:
         on_line=lambda line: arduino_handler.handle_line(line) if arduino_handler else None,
         on_connection_change=store.set_arduino_connected,
     )
-    arduino_handler = ArduinoHandler(store, machine, protocol, serial_service)
+    arduino_handler = ArduinoHandler(store, protocol, serial_service)
 
-app = create_app(store, machine, serial_service, arduino_handler)
+app = create_app(store, protocol, serial_service, arduino_handler)
 
 
 if __name__ == "__main__":
