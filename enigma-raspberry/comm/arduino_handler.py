@@ -1,6 +1,6 @@
 import logging
 
-from comm.protocol import MobileProtocol, parse_slots_csv, sanitize_payload
+from comm.protocol import MobileProtocol, sanitize_payload
 from comm.serial_service import SerialService
 from enigma.models import MachineConfig, MachineMode, TransferRole
 from state.store import StateStore
@@ -60,20 +60,11 @@ class ArduinoHandler:
         config = self.store.get_config()
         self.serial.send_line(self._format_cfg(config))
 
-    def push_config_slots_to_arduino(self, config: MachineConfig) -> None:
-        self.serial.send_line(self._format_cfg(config))
-
     def push_cipher_to_arduino(self, cipher: str) -> None:
         clean = sanitize_payload(cipher)
         if not clean:
             return
         self.serial.send_line(f"IN:{clean}")
-
-    def deliver_cipher_to_arduino(self, cipher: str, config_before: MachineConfig) -> None:
-        """Alinha rotores PRE-mensagem, envia IN: e depois pos-posicao."""
-        self.push_config_slots_to_arduino(config_before)
-        self.push_cipher_to_arduino(cipher)
-        self.push_config_to_arduino()
 
     def _handle_sync(self) -> None:
         config = self.store.get_config()
@@ -82,10 +73,9 @@ class ArduinoHandler:
         logger.info("SYNC -> %s", line)
 
     def _handle_send(self, payload: str) -> None:
-        try:
-            cipher, slots_after = self._parse_send_payload(payload)
-        except ValueError as error:
-            self.serial.send_line(f"ERR:{error}")
+        cipher = sanitize_payload(payload.strip())
+        if not cipher:
+            self.serial.send_line("ERR:PAYLOAD_VAZIO")
             return
 
         config = self.store.get_config()
@@ -95,13 +85,12 @@ class ArduinoHandler:
             return
 
         try:
-            ack = self.protocol.relay_cipher_from_arduino(cipher, slots_after)
+            ack = self.protocol.relay_cipher_from_arduino(cipher)
         except ValueError as error:
             self.serial.send_line(f"ERR:{error}")
             return
 
         self.serial.send_line(f"ACK:{ack.messageId}")
-        self.push_config_to_arduino()
         logger.info(
             "SEND fisico aceite payload=%s role=%s",
             ack.payload,
@@ -125,23 +114,6 @@ class ArduinoHandler:
             MachineConfig(slots=state.slots, mode=state.mode, role=state.role)
         )
         self.serial.send_line(f"STATUS:{slot_text}:ROLE:{state.role.value}")
-
-    @staticmethod
-    def _parse_send_payload(payload: str) -> tuple[str, list]:
-        clean = payload.strip()
-        if "|" not in clean:
-            raise ValueError("SLOTS_OBRIGATORIOS")
-
-        cipher_text, slots_text = clean.split("|", 1)
-        cipher = sanitize_payload(cipher_text)
-        if not cipher:
-            raise ValueError("PAYLOAD_VAZIO")
-
-        slots_after = parse_slots_csv(slots_text)
-        if not slots_after:
-            raise ValueError("SLOTS_OBRIGATORIOS")
-
-        return cipher, slots_after
 
     @staticmethod
     def _format_cfg(config: MachineConfig) -> str:

@@ -312,12 +312,8 @@ void handleSend() {
   }
 
   refreshEncryptDisplay();
-  char slotsBuf[48];
-  rotorFormatSlotsCsv(machineConfig, slotsBuf, sizeof(slotsBuf));
   Serial.print(F("SEND:"));
-  Serial.print(line1Cipher);
-  Serial.print('|');
-  Serial.println(slotsBuf);
+  Serial.println(line1Cipher);
   messageActive = true;
   refreshModeLeds();
 }

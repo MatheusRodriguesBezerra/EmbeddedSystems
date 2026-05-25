@@ -45,12 +45,8 @@ def parse_slots_csv(value: str) -> list[RotorSlot]:
     return slots
 
 
-def format_slots_csv(slots: list[RotorSlot]) -> str:
-    return ",".join(f"{slot.id},{slot.position}" for slot in slots)
-
-
 class MobileProtocol:
-    """Ponte half-duplex: nao cifra/decifra; apenas estado e transporte."""
+    """Ponte half-duplex: transporte de mensagens e turno; sem cifra/decifra."""
 
     def __init__(self, store: StateStore) -> None:
         self.store = store
@@ -58,7 +54,6 @@ class MobileProtocol:
     def relay_cipher_from_mobile(
         self,
         payload: str,
-        slots_after: list[RotorSlot],
         message_id: str | None = None,
     ) -> MessageAck:
         clean_payload = sanitize_payload(payload)
@@ -73,15 +68,14 @@ class MobileProtocol:
         if self.store.has_processed(resolved_message_id):
             raise ValueError("Mensagem duplicada.")
 
-        next_role = complementary_role(config.role)
-        self._apply_slots_after(slots_after, next_role)
+        next_role = self._flip_role()
         self.store.add_history(
             HistoryItem(
                 messageId=resolved_message_id,
                 direction="sent",
                 payload=clean_payload,
                 plainText="",
-                slots=slots_after,
+                slots=[],
                 mode=config.mode,
             )
         )
@@ -90,15 +84,10 @@ class MobileProtocol:
             payload=clean_payload,
             messageId=resolved_message_id,
             plainText="",
-            slots=slots_after,
             role=next_role,
         )
 
-    def relay_cipher_from_arduino(
-        self,
-        payload: str,
-        slots_after: list[RotorSlot],
-    ) -> MessageAck:
+    def relay_cipher_from_arduino(self, payload: str) -> MessageAck:
         clean_payload = sanitize_payload(payload)
         if not clean_payload:
             raise ValueError("PAYLOAD_VAZIO")
@@ -108,8 +97,7 @@ class MobileProtocol:
             raise ValueError("NOT_SENDING")
 
         message_id = str(uuid4())
-        next_role = complementary_role(config.role)
-        self._apply_slots_after(slots_after, next_role)
+        next_role = self._flip_role()
         self.store.set_pending_outgoing(clean_payload, message_id)
         self.store.add_history(
             HistoryItem(
@@ -117,7 +105,7 @@ class MobileProtocol:
                 direction="sent",
                 payload=clean_payload,
                 plainText="",
-                slots=slots_after,
+                slots=[],
                 mode=config.mode,
             )
         )
@@ -127,13 +115,14 @@ class MobileProtocol:
             payload=clean_payload,
             messageId=message_id,
             plainText="",
-            slots=slots_after,
             role=next_role,
         )
 
-    def _apply_slots_after(self, slots_after: list[RotorSlot], next_role: TransferRole) -> None:
-        MachineConfig(slots=slots_after)
-        self.store.set_slots_and_role(slots_after, next_role)
+    def _flip_role(self) -> TransferRole:
+        config = self.store.get_config()
+        next_role = complementary_role(config.role)
+        self.store.set_config(config.model_copy(update={"role": next_role}))
+        return next_role
 
 
 def parse_serial_command(command: str) -> tuple[str, list[str]]:

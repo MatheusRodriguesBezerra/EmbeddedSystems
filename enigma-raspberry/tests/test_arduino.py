@@ -46,38 +46,28 @@ def test_sync_responds_with_cfg(tmp_path: Path):
 def test_send_from_physical_updates_pending_and_role(tmp_path: Path):
     handler, store, fake = make_handler(tmp_path, TransferRole.SENDING)
 
-    handler.handle_line("SEND:ABC|1,0,2,0,3,3")
+    handler.handle_line("SEND:ABC")
 
     assert any(line.startswith("ACK:") for line in fake.sent)
     assert store.get_config().role == TransferRole.RECEIVING
     pending = store.get_pending_outgoing()
     assert pending.available is True
     assert pending.payload == "ABC"
-    assert pending.slots[-1].position == 3
 
 
 def test_send_rejected_when_not_sending(tmp_path: Path):
     handler, _, fake = make_handler(tmp_path, TransferRole.RECEIVING)
 
-    handler.handle_line("SEND:ABC|1,0,2,0,3,0")
+    handler.handle_line("SEND:ABC")
 
     assert fake.sent == ["ERR:NOT_SENDING"]
 
 
-def test_send_requires_slots_suffix(tmp_path: Path):
-    handler, _, fake = make_handler(tmp_path, TransferRole.SENDING)
-
-    handler.handle_line("SEND:ABC")
-
-    assert fake.sent == ["ERR:SLOTS_OBRIGATORIOS"]
-
-
-def test_protocol_relay_physical_outgoing(tmp_path: Path):
+def test_relay_physical_outgoing(tmp_path: Path):
     store = StateStore(tmp_path / "state.json")
     store.set_config(MachineConfig(role=TransferRole.SENDING, slots=default_slots()))
     protocol = MobileProtocol(store)
 
-    ack = protocol.relay_cipher_from_arduino("HI", [RotorSlot(id=1, position=0), RotorSlot(id=2, position=2)])
+    ack = protocol.relay_cipher_from_arduino("HI")
 
     assert ack.payload == "HI"
-    assert ack.plainText == ""

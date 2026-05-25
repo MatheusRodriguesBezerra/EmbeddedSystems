@@ -90,7 +90,6 @@ class StateStore:
                 available=True,
                 payload=self._state.pendingPayload,
                 messageId=self._state.pendingMessageId,
-                slots=[slot.model_copy() for slot in self._state.config.slots],
                 role=self._state.config.role,
             )
 
@@ -103,7 +102,6 @@ class StateStore:
                     available=True,
                     payload=self._state.pendingPayload,
                     messageId=self._state.pendingMessageId,
-                    slots=[slot.model_copy() for slot in self._state.config.slots],
                     role=self._state.config.role,
                 )
             self._state.pendingPayload = ""

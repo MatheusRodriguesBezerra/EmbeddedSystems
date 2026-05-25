@@ -53,6 +53,7 @@ def create_app(
 
     @app.post("/config")
     def set_config(config: MachineConfig):
+        """Sincronizacao explicita de rotores (app mobile -> Pi -> Arduino SYNC)."""
         pi_config = config_for_pi_from_app(config)
         updated = store.set_config(pi_config)
         if arduino_handler:
@@ -72,25 +73,31 @@ def create_app(
         return updated
 
     @app.post("/message", response_model=MessageAck)
-    def relay_message(body: CipherTransfer) -> MessageAck:
-        """Recebe payload ja cifrado pelo app mobile e encaminha ao Arduino."""
+    def relay_message_post(body: CipherTransfer) -> MessageAck:
+        """Encaminha payload cifrado (mobile -> Pi -> Arduino). Sem rotores."""
+        return _relay_cipher(body.payload, body.messageId)
+
+    @app.get("/message/{payload}", response_model=MessageAck)
+    def relay_message_get(
+        payload: str,
+        messageId: str | None = Query(default=None),
+    ) -> MessageAck:
+        """Encaminha payload cifrado via GET (compatibilidade). Sem rotores."""
+        return _relay_cipher(payload, messageId)
+
+    def _relay_cipher(payload: str, message_id: str | None = None) -> MessageAck:
         try:
-            config_before = store.get_config()
-            ack = protocol.relay_cipher_from_mobile(
-                body.payload,
-                body.slots,
-                body.messageId,
-            )
+            ack = protocol.relay_cipher_from_mobile(payload, message_id)
             if arduino_handler:
-                arduino_handler.deliver_cipher_to_arduino(ack.payload, config_before)
+                arduino_handler.push_cipher_to_arduino(ack.payload)
             return ack
         except ValueError as error:
-            logger.warning("POST /message rejeitado: %s", error)
+            logger.warning("Relay /message rejeitado: %s", error)
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/pending", response_model=PendingOutgoing)
     def get_pending(consume: bool = Query(default=True)) -> PendingOutgoing:
-        """Mensagem cifrada enviada pela maquina fisica (Arduino) para o app."""
+        """Mensagem cifrada enviada pelo Arduino para o app (somente payload)."""
         if consume:
             return store.clear_pending_outgoing()
         return store.get_pending_outgoing()

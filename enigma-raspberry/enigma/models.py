@@ -52,26 +52,14 @@ class AppRoleUpdate(BaseModel):
 
 class CipherTransfer(BaseModel):
     payload: str
-    slots: list[RotorSlot]
     messageId: str | None = None
-
-    @field_validator("slots")
-    @classmethod
-    def validate_transfer_slots(cls, value: list[RotorSlot]) -> list[RotorSlot]:
-        if len(value) > 4:
-            raise ValueError("No maximo 4 rotores podem estar ativos.")
-        ids = [slot.id for slot in value]
-        if len(set(ids)) != len(ids):
-            raise ValueError("Cada rotor deve ser usado no maximo uma vez.")
-        return value
 
 
 class MessageAck(BaseModel):
     status: str = "received"
     payload: str
     messageId: str
-    plainText: str
-    slots: list[RotorSlot]
+    plainText: str = ""
     role: TransferRole
 
 
@@ -79,7 +67,6 @@ class PendingOutgoing(BaseModel):
     available: bool = False
     payload: str = ""
     messageId: str = ""
-    slots: list[RotorSlot] = Field(default_factory=list)
     role: TransferRole = TransferRole.IDLE
 
 
