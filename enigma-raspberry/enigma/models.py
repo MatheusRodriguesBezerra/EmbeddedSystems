@@ -4,9 +4,6 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-RotorId = Literal["I", "II", "III"]
-
-
 class MachineMode(str, Enum):
     ENC = "ENC"
     DEC = "DEC"
@@ -18,24 +15,24 @@ class TransferRole(str, Enum):
     RECEIVING = "RECEIVING"
 
 
+class RotorSlot(BaseModel):
+    id: int = Field(ge=1, le=6)
+    position: int = Field(ge=0, le=25)
+
+
 class MachineConfig(BaseModel):
-    order: tuple[RotorId, RotorId, RotorId] = ("I", "II", "III")
-    positions: tuple[int, int, int] = (0, 0, 0)
+    slots: list[RotorSlot] = Field(default_factory=list, max_length=4)
     mode: MachineMode = MachineMode.ENC
     role: TransferRole = TransferRole.IDLE
 
-    @field_validator("order")
+    @field_validator("slots")
     @classmethod
-    def validate_order(cls, value: tuple[RotorId, RotorId, RotorId]) -> tuple[RotorId, RotorId, RotorId]:
-        if len(set(value)) != 3:
-            raise ValueError("Cada rotor fixo deve ser usado exatamente uma vez.")
-        return value
-
-    @field_validator("positions")
-    @classmethod
-    def validate_positions(cls, value: tuple[int, int, int]) -> tuple[int, int, int]:
-        if any(position < 0 or position > 25 for position in value):
-            raise ValueError("As posições dos rotores devem estar entre 0 e 25.")
+    def validate_slots(cls, value: list[RotorSlot]) -> list[RotorSlot]:
+        if len(value) > 4:
+            raise ValueError("No maximo 4 rotores podem estar ativos.")
+        ids = [slot.id for slot in value]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Cada rotor deve ser usado no maximo uma vez.")
         return value
 
 
@@ -58,7 +55,7 @@ class MessageAck(BaseModel):
     payload: str
     messageId: str
     plainText: str
-    positions: tuple[int, int, int]
+    slots: list[RotorSlot]
     role: TransferRole
 
 
@@ -66,8 +63,7 @@ class PendingOutgoing(BaseModel):
     available: bool = False
     payload: str = ""
     messageId: str = ""
-    plainText: str = ""
-    positions: tuple[int, int, int] = (0, 0, 0)
+    slots: list[RotorSlot] = Field(default_factory=list)
     role: TransferRole = TransferRole.IDLE
 
 
@@ -76,7 +72,7 @@ class HistoryItem(BaseModel):
     direction: Literal["sent", "received"]
     payload: str
     plainText: str
-    positions: tuple[int, int, int]
+    slots: list[RotorSlot]
     mode: MachineMode
 
 
@@ -87,4 +83,3 @@ class StoredState(BaseModel):
     processedMessageIds: list[str] = Field(default_factory=list)
     pendingPayload: str = ""
     pendingMessageId: str = ""
-    pendingPlainText: str = ""

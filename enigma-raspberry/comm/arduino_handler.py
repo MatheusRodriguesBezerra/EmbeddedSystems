@@ -1,19 +1,16 @@
 import logging
-from uuid import uuid4
 
-from comm.protocol import MobileProtocol, complementary_role, sanitize_payload
+from comm.protocol import MobileProtocol, sanitize_payload
 from comm.serial_service import SerialService
 from enigma.machine import EnigmaMachine
-from enigma.models import HistoryItem, MachineMode, TransferRole
+from enigma.models import MachineConfig, MachineMode, TransferRole
 from state.store import StateStore
 
 logger = logging.getLogger(__name__)
 
-# Linhas de debug do firmware (nao sao comandos de protocolo)
 _DEBUG_PREFIXES = (
     "ENIGMA:",
     "---",
-    "KEYPAD",
     "KEYPAD",
     "LCD[",
     "LEDS ",
@@ -66,9 +63,9 @@ class ArduinoHandler:
 
         logger.debug("Linha Serial ignorada: %s", line)
 
-    def push_positions_to_arduino(self) -> None:
+    def push_config_to_arduino(self) -> None:
         config = self.store.get_config()
-        self.serial.send_line(self._format_pos(config.positions))
+        self.serial.send_line(self._format_cfg(config))
 
     def push_cipher_to_arduino(self, cipher: str) -> None:
         clean = sanitize_payload(cipher)
@@ -78,8 +75,9 @@ class ArduinoHandler:
 
     def _handle_sync(self) -> None:
         config = self.store.get_config()
-        self.serial.send_line(self._format_pos(config.positions))
-        logger.info("SYNC -> %s", self._format_pos(config.positions))
+        line = self._format_cfg(config)
+        self.serial.send_line(line)
+        logger.info("SYNC -> %s", line)
 
     def _handle_send(self, payload: str) -> None:
         clean = sanitize_payload(payload)
@@ -102,9 +100,8 @@ class ArduinoHandler:
         message_id = ack.messageId
         self.serial.send_line(f"ACK:{message_id}")
         logger.info(
-            "SEND fisico aceite payload=%s plain=%s role=%s",
+            "SEND fisico aceite payload=%s role=%s",
             ack.payload,
-            ack.plainText,
             ack.role,
         )
 
@@ -125,20 +122,29 @@ class ArduinoHandler:
             return
 
         config = self.store.get_config()
-        output, positions = self.machine.process_message(clean, config)
-        self.store.set_positions_and_role(positions, config.role)
+        try:
+            output, slots = self.machine.process_message(clean, config)
+        except ValueError as error:
+            self.serial.send_line(f"ERR:{error}")
+            return
+
+        self.store.set_slots_and_role(slots, config.role)
         self.serial.send_line(f"OUT:{output}")
-        self.serial.send_line(self._format_pos(positions))
+        self.serial.send_line(self._format_cfg(self.store.get_config()))
 
     def _handle_status(self) -> None:
         state = self.store.get_machine_state()
-        self.serial.send_line(
-            f"STATUS:POS:{','.join(map(str, state.positions))}:ROLE:{state.role.value}"
-        )
+        slot_text = self._format_cfg(MachineConfig(slots=state.slots, mode=state.mode, role=state.role))
+        self.serial.send_line(f"STATUS:{slot_text}:ROLE:{state.role.value}")
 
     @staticmethod
-    def _format_pos(positions: tuple[int, int, int]) -> str:
-        return f"POS:{positions[0]},{positions[1]},{positions[2]}"
+    def _format_cfg(config: MachineConfig) -> str:
+        if not config.slots:
+            return "CFG:"
+        parts = []
+        for slot in config.slots:
+            parts.append(f"{slot.id},{slot.position}")
+        return f"CFG:{','.join(parts)}"
 
     @staticmethod
     def _is_debug_line(line: str) -> bool:

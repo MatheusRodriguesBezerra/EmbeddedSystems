@@ -43,16 +43,16 @@ class MobileProtocol:
         if self.store.has_processed(resolved_message_id):
             raise ValueError("Mensagem duplicada.")
 
-        plain_text, next_positions = self.machine.process_message(clean_payload, config)
+        plain_text, next_slots = self.machine.process_message(clean_payload, config)
         next_role = complementary_role(config.role)
-        self.store.set_positions_and_role(next_positions, next_role)
+        self.store.set_slots_and_role(next_slots, next_role)
         self.store.add_history(
             HistoryItem(
                 messageId=resolved_message_id,
                 direction="received",
                 payload=clean_payload,
                 plainText=plain_text,
-                positions=next_positions,
+                slots=next_slots,
                 mode=config.mode,
             )
         )
@@ -61,7 +61,7 @@ class MobileProtocol:
             payload=clean_payload,
             messageId=resolved_message_id,
             plainText=plain_text,
-            positions=next_positions,
+            slots=next_slots,
             role=next_role,
         )
 
@@ -74,17 +74,17 @@ class MobileProtocol:
         if config.role != TransferRole.SENDING:
             raise ValueError("Raspberry não está em SENDING.")
 
-        payload, next_positions = self.machine.process_message(clean_text, config)
+        payload, next_slots = self.machine.process_message(clean_text, config)
         message_id = str(uuid4())
         next_role = complementary_role(config.role)
-        self.store.set_positions_and_role(next_positions, next_role)
+        self.store.set_slots_and_role(next_slots, next_role)
         self.store.add_history(
             HistoryItem(
                 messageId=message_id,
                 direction="sent",
                 payload=payload,
                 plainText=clean_text,
-                positions=next_positions,
+                slots=next_slots,
                 mode=config.mode,
             )
         )
@@ -93,7 +93,7 @@ class MobileProtocol:
             payload=payload,
             messageId=message_id,
             plainText=clean_text,
-            positions=next_positions,
+            slots=next_slots,
             role=next_role,
         )
 
@@ -107,18 +107,18 @@ class MobileProtocol:
         if config.role != TransferRole.SENDING:
             raise ValueError("NOT_SENDING")
 
-        plain_text, next_positions = self.machine.process_message(clean_payload, config)
+        _, next_slots = self.machine.process_message(clean_payload, config)
         message_id = str(uuid4())
         next_role = complementary_role(config.role)
-        self.store.set_positions_and_role(next_positions, next_role)
-        self.store.set_pending_outgoing(clean_payload, message_id, plain_text)
+        self.store.set_slots_and_role(next_slots, next_role)
+        self.store.set_pending_outgoing(clean_payload, message_id)
         self.store.add_history(
             HistoryItem(
                 messageId=message_id,
                 direction="sent",
                 payload=clean_payload,
-                plainText=plain_text,
-                positions=next_positions,
+                plainText="",
+                slots=next_slots,
                 mode=config.mode,
             )
         )
@@ -127,8 +127,8 @@ class MobileProtocol:
             status="received",
             payload=clean_payload,
             messageId=message_id,
-            plainText=plain_text,
-            positions=next_positions,
+            plainText="",
+            slots=next_slots,
             role=next_role,
         )
 

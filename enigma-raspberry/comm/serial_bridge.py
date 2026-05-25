@@ -14,12 +14,9 @@ class SerialBridge:
 
         if command.startswith("KEY:"):
             letter = command.split(":", 1)[1][:1]
-            output, positions = self.machine.process_message(letter, config)
-            self.store.set_positions_and_role(positions, config.role)
+            output, slots = self.machine.process_message(letter, config)
+            self.store.set_slots_and_role(slots, config.role)
             return f"OUT:{output}"
-
-        if command.startswith("ROTOR:"):
-            return self._handle_rotor(command, config)
 
         if command.startswith("MODE:"):
             mode = command.split(":", 1)[1]
@@ -29,19 +26,11 @@ class SerialBridge:
 
         if command == "STATUS":
             state = self.store.get_machine_state()
-            return f"STATUS:POS:{','.join(map(str, state.positions))}:ROLE:{state.role}"
+            parts = [f"{slot.id},{slot.position}" for slot in state.slots]
+            cfg = f"CFG:{','.join(parts)}" if parts else "CFG:"
+            return f"STATUS:{cfg}:ROLE:{state.role}"
 
         if command == "SEND":
             return "STATUS:SEND_READY"
 
         return "STATUS:UNKNOWN_COMMAND"
-
-    def _handle_rotor(self, command: str, config: MachineConfig) -> str:
-        _, index_text, delta_text = command.split(":")
-        index = int(index_text)
-        delta = int(delta_text)
-        positions = list(config.positions)
-        positions[index] = (positions[index] + delta) % 26
-        next_config = config.model_copy(update={"positions": tuple(positions)})
-        self.store.set_config(next_config)
-        return f"POS:{','.join(map(str, positions))}"

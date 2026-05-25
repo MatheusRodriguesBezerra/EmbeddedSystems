@@ -16,9 +16,12 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
-#define PIN_LED_1 48
-#define PIN_LED_2 50
-#define PIN_LED_3 52
+#include "config.h"
+#include "letter_leds.h"
+
+#define PIN_LED_1 PIN_LED_DECRYPT
+#define PIN_LED_2 PIN_LED_ENCRYPT
+#define PIN_LED_3 PIN_LED_MESSAGE
 
 // Tente 0x27; se LCD vazio, mude para 0x3F e volte a carregar
 #define LCD_ADDR 0x27
@@ -46,18 +49,20 @@ void setup() {
 
   for (int n = 0; n < 5; n++) {
     digitalWrite(LED_BUILTIN, HIGH);
-    Serial.print(F("Piscada "));
+    Serial.print(F("Piscada modo "));
     Serial.println(n + 1);
-
     blinkPin(PIN_LED_1, 200);
     blinkPin(PIN_LED_2, 200);
     blinkPin(PIN_LED_3, 200);
-
     digitalWrite(LED_BUILTIN, LOW);
     delay(300);
   }
 
-  Serial.println(F("LEDs: se nao piscaram, verifique cabos e pinos 48/50/52"));
+  Serial.println(F("LEDs modo: se nao piscaram, verifique 48/50/52"));
+
+  initLetterLeds();
+  selfTestBinaryLeds();
+  Serial.println(F("LEDs L1-L5: teste A-E (valores 1-5)"));
   Serial.println(F("LED onboard (L) deve ter piscado junto com os externos"));
 
   Wire.begin();

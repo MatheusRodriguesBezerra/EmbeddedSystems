@@ -68,17 +68,100 @@ Conjunto completo: 26 letras + `SEND` + `RESET/SYNC` + `R1` + `R2` + `R3` + `MOD
 
 ## LEDs
 
-Os LEDs são simples, com dois pinos cada. Cada LED deve usar um resistor em série, recomendado entre `220 ohm` e `330 ohm`.
+### Porque ficam fracos sem resistor?
+
+Ligar **LED direto** ao pino do Arduino (sem resistor) **nao e recomendado**:
+
+1. O Mega **limita a corrente** de cada pino (~40 mA max., ~20 mA recomendado).
+2. Com **varios LEDs** ligados (48, 50, 52 + L1–L5), a corrente divide-se e todos parecem **mais fracos**.
+3. No fim da mensagem decifrada o firmware acende **5 LEDs ao mesmo tempo** — e o pior caso para brilho.
+4. Sem resistor o LED e o pino do Arduino podem **aquecer** e degradar; o brilho fica instavel.
+
+**Conclusao:** use sempre resistor em serie. O resistor nao “rouba” luz de forma errada — ele define uma corrente segura; com o valor certo o LED fica **mais brilhante e estavel** do que no limite estranho sem resistor.
+
+### Ligacao correta (5 V, um LED por pino)
+
+```text
+Pino Arduino (48, 46, etc.) ----[ resistor ]----(+ LED -)---- GND
+```
+
+- **Perna longa (+)** do LED → lado do resistor que vem do pino.
+- **Perna curta (-)** → **GND** comum da protoboard.
+- **GND do Arduino** ligado ao trilho `-` da protoboard.
+
+### Qual resistor usar (mais brilho, ainda seguro)
+
+Formula: `R = (5 V - V_LED) / I`
+
+| Cor LED (tipico) | V_LED | Resistor | Corrente aprox. | Brilho |
+| --- | --- | --- | --- | --- |
+| Vermelho / amarelo | ~2,0 V | **150 Ω** | ~20 mA | Forte |
+| Verde | ~2,2 V | **150 Ω** | ~19 mA | Forte |
+| Azul / branco | ~3,0 V | **100 Ω** | ~20 mA | Forte |
+| Uso conservador | — | **220 Ω** | ~10–15 mA | Medio (seguro) |
+
+Para o projeto academico, **150 Ω** (vermelho/verde) ou **100 Ω** (azul/branco) costuma resolver “LED fraco”. **220 Ω** e mais suave.
+
+Compre um kit **150 Ω + 220 Ω**; custo baixo e evita queimar pinos.
+
+### Limites do Arduino Mega
+
+- Por pino: evite passar de **20 mA** continuos.
+- **Total** de todos os pinos: nao ultrapassar ~**200 mA** somados.
+- Com 8 LEDs a ~15 mA cada, se **todos** estiverem ON ao mesmo tempo (~120 mA), ainda e aceitavel **com resistor em cada um**.
+
+Se precisar de muito brilho com muitos LEDs ON juntos, use **transistor** (ex. 2N2222) ou modulo a 5 V externo — fora do escopo minimo do projeto.
 
 Mapeamento definido (ver `COMPORTAMENTO.md` para funções de firmware):
 
 | LED | Pino Arduino | Função no firmware |
 | --- | --- | --- |
-| LED 1 | 48 | Modo decifrar (estado inicial) |
-| LED 2 | 50 | Modo cifrar |
-| LED 3 | 52 | Mensagem recebida ou enviada |
+| Modo decifrar | **48** | Estado inicial / modo DEC |
+| Modo cifrar | **50** | Modo ENC |
+| Mensagem | **54** (A0) | Mensagem recebida ou enviada |
+| L1 | **46** | bit 0 (binario) |
+| L2 | **47** | bit 1 |
+| L3 | **49** | bit 2 |
+| L4 | **51** | bit 3 |
+| L5 | **55** (A1) | bit 4 |
 
-Ligação recomendada:
+### Pinos reservados e SPI (Mega 2560)
+
+| Pinos | Uso |
+| --- | --- |
+| 22–29 | Keypad 1 |
+| 30–37 | Keypad 2 |
+| **38–45** | Keypad 3 (futuro) |
+| 20–21 | LCD I2C (SDA/SCL) |
+| 50–51 | SPI MISO/MOSI — **ENC e L4** (funcionam na sua montagem) |
+| **52–53** | SPI SCK/SS — **evitar**; MSG e L5 usam **54 (A0)** e **55 (A1)** |
+
+### LEDs binarios L1 a L5 (valor da letra)
+
+**Um resistor por LED** (mesma regra acima). L1 e o bit menos significativo (LSB).
+
+| LED | Pino | Bit |
+| --- | --- | --- |
+| L1 | 46 | 0 |
+| L2 | 47 | 1 |
+| L3 | 49 | 2 |
+| L4 | 51 | 3 |
+| L5 | 55 (A1) | 4 |
+
+Codificacao: `A=1`, `B=2`, `C=3` (L1+L2), ... `Z=26`. Ex.: **C** acende L1 e L2.
+
+- **Modo cifrar:** ao digitar, mostra a letra **cifrada** nos L1-L5 durante 2 s.
+- **Modo decifrar:** ao receber `IN:<payload>`, mostra cada letra **decifrada** 2 s; no fim todos os L1-L5 acesos 5 s.
+
+### Checklist se o LED continua fraco
+
+1. Confirmar **polaridade** (perna longa no resistor vindo do pino).
+2. **GND comum** entre Arduino e todos os LEDs.
+3. Colocar **150 Ω** (ou 100 Ω em LED azul/branco) em **cada** LED.
+4. Testar **um LED so** no pino 46: se ficar forte, o problema era corrente partilhada / varios sem resistor.
+5. No Serial Monitor (115200), no boot deve aparecer o teste dos LEDs modo e L1-L5.
+
+Ligação recomendada (resumo):
 
 | Elemento | Ligação |
 | --- | --- |
@@ -90,9 +173,10 @@ Exemplo lógico:
 
 | LED | Caminho |
 | --- | --- |
-| LED 1 | Pino 48 -> resistor -> LED -> GND |
-| LED 2 | Pino 50 -> resistor -> LED -> GND |
-| LED 3 | Pino 52 -> resistor -> LED -> GND |
+| Modo DEC | Pino 48 -> resistor -> LED -> GND |
+| Modo ENC | Pino 50 -> resistor -> LED -> GND |
+| Mensagem | Pino 54 (A0) -> resistor -> LED -> GND |
+| L1–L5 | Pinos 46, 47, 49, 51, 55 -> resistor -> LED -> GND |
 
 ## LCD 20x4 I2C
 

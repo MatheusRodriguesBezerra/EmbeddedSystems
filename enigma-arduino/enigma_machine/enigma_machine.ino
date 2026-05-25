@@ -13,6 +13,8 @@
 
 #include "config.h"
 #include "enigma.h"
+#include "letter_leds.h"
+#include "rotor_bank.h"
 
 enum UiMode { MODE_DECRYPT, MODE_ENCRYPT };
 
@@ -35,12 +37,25 @@ const byte KP2_COLS = 4;
 char keys2[KP2_ROWS][KP2_COLS] = {
     {'Q', 'R', 'S', 'T'},
     {'U', 'V', 'W', 'X'},
-    {'Y', 'Z', KEY_SEND, KEY_MODE},
-    {KEY_R1, KEY_R2, KEY_R3, KEY_RESET_SYNC},
+    {'Y', 'Z', KEY_NONE, KEY_NONE},
+    {KEY_MODE, KEY_RESET, KEY_SYNC, KEY_SEND},
 };
 byte rowPins2[KP2_ROWS] = {30, 31, 32, 33};
 byte colPins2[KP2_COLS] = {34, 35, 36, 37};
 Keypad keypad2 = Keypad(makeKeymap(keys2), rowPins2, colPins2, KP2_ROWS, KP2_COLS);
+
+// Keypad 3: pinos 38-45
+const byte KP3_ROWS = 4;
+const byte KP3_COLS = 4;
+char keys3[KP3_ROWS][KP3_COLS] = {
+    {KEY_R1_PLUS, KEY_R1, KEY_R2_PLUS, KEY_R2},
+    {KEY_R3_PLUS, KEY_R3, KEY_R4_PLUS, KEY_R4},
+    {KEY_R5_PLUS, KEY_R5, KEY_R6_PLUS, KEY_R6},
+    {KEY_S1, KEY_S2, KEY_S3, KEY_S4},
+};
+byte rowPins3[KP3_ROWS] = {38, 39, 40, 41};
+byte colPins3[KP3_COLS] = {42, 43, 44, 45};
+Keypad keypad3 = Keypad(makeKeymap(keys3), rowPins3, colPins3, KP3_ROWS, KP3_COLS);
 
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, LCD_COLS, LCD_ROWS);
 
@@ -49,14 +64,29 @@ EnigmaConfig machineConfig;
 String plainCompose = "";
 String line1Cipher = "";
 String line2Plain = "";
-uint8_t compositionStart[3] = {0, 0, 0};
+uint8_t compositionStartPos[MAX_ACTIVE_ROTORS] = {0, 0, 0, 0};
+uint8_t compositionStartCount = 0;
 
-char serialLine[64];
+char serialLine[96];
 uint8_t serialLineLen = 0;
 
 unsigned long syncDeadline = 0;
 bool awaitingSyncResponse = false;
 bool lcdReady = false;
+bool messageActive = false;
+
+void setLeds(bool decryptOn, bool encryptOn, bool messageOn);
+
+bool hasDisplayedMessage() {
+  return messageActive;
+}
+
+void refreshModeLeds() {
+  bool decryptOn = (uiMode == MODE_DECRYPT);
+  bool encryptOn = (uiMode == MODE_ENCRYPT);
+  bool messageOn = hasDisplayedMessage();
+  setLeds(decryptOn, encryptOn, messageOn);
+}
 
 void scanI2CBus() {
   Serial.println(F("--- Scan I2C (SDA=20, SCL=21) ---"));
@@ -80,13 +110,6 @@ void scanI2CBus() {
   Serial.println(F("--------------------------------"));
 }
 
-void blinkLed(uint8_t pin, uint16_t ms) {
-  digitalWrite(pin, HIGH);
-  delay(ms);
-  digitalWrite(pin, LOW);
-  delay(ms);
-}
-
 void debugKeyPress(char keypadId, char key) {
 #if DEBUG_KEYS
   Serial.print(F("Keypad "));
@@ -105,16 +128,24 @@ void debugKeyPress(char keypadId, char key) {
 }
 
 void setLeds(bool decryptOn, bool encryptOn, bool messageOn) {
+  pinMode(PIN_LED_DECRYPT, OUTPUT);
+  pinMode(PIN_LED_ENCRYPT, OUTPUT);
+  pinMode(PIN_LED_MESSAGE, OUTPUT);
+
   digitalWrite(PIN_LED_DECRYPT, decryptOn ? LED_ON : LED_OFF);
   digitalWrite(PIN_LED_ENCRYPT, encryptOn ? LED_ON : LED_OFF);
   digitalWrite(PIN_LED_MESSAGE, messageOn ? LED_ON : LED_OFF);
 
-  Serial.print(F("LEDs DEC(48)="));
-  Serial.print(decryptOn ? F("ON") : F("off"));
-  Serial.print(F(" ENC(50)="));
-  Serial.print(encryptOn ? F("ON") : F("off"));
-  Serial.print(F(" MSG(52)="));
-  Serial.println(messageOn ? F("ON") : F("off"));
+  Serial.print(F("LEDs DEC("));
+  Serial.print(PIN_LED_DECRYPT);
+  Serial.print(decryptOn ? F(")=ON") : F(")=off"));
+  Serial.print(F(" ENC("));
+  Serial.print(PIN_LED_ENCRYPT);
+  Serial.print(encryptOn ? F(")=ON") : F(")=off"));
+  Serial.print(F(" MSG("));
+  Serial.print(PIN_LED_MESSAGE);
+  Serial.print(messageOn ? F(")=ON") : F(")=off"));
+  Serial.println();
 }
 
 void printLcdLine(uint8_t row, const String &text) {
@@ -138,24 +169,24 @@ void printLcdLine(uint8_t row, const String &text) {
 
 void updateRotorLine() {
   char buf[24];
-  snprintf(buf, sizeof(buf), "R1:%u R2:%u R3:%u",
-           machineConfig.positions[0],
-           machineConfig.positions[1],
-           machineConfig.positions[2]);
+  rotorFormatLine(machineConfig, buf, sizeof(buf));
   printLcdLine(3, buf);
 }
 
 void clearMessageLines() {
   line1Cipher = "";
   line2Plain = "";
+  messageActive = false;
   printLcdLine(0, "");
   printLcdLine(1, "");
+  refreshModeLeds();
 }
 
 void snapshotCompositionStart() {
-  compositionStart[0] = machineConfig.positions[0];
-  compositionStart[1] = machineConfig.positions[1];
-  compositionStart[2] = machineConfig.positions[2];
+  compositionStartCount = machineConfig.slotCount;
+  for (uint8_t i = 0; i < MAX_ACTIVE_ROTORS; i++) {
+    compositionStartPos[i] = (i < compositionStartCount) ? machineConfig.slotPos[i] : 0;
+  }
 }
 
 void refreshEncryptDisplay() {
@@ -164,15 +195,21 @@ void refreshEncryptDisplay() {
     return;
   }
 
+  if (machineConfig.slotCount == 0) {
+    printLcdLine(2, "Sem rotores");
+    return;
+  }
+
   EnigmaConfig work = machineConfig;
-  work.positions[0] = compositionStart[0];
-  work.positions[1] = compositionStart[1];
-  work.positions[2] = compositionStart[2];
+  work.slotCount = compositionStartCount;
+  for (uint8_t i = 0; i < compositionStartCount; i++) {
+    work.slotPos[i] = compositionStartPos[i];
+  }
 
   String cipher = enigmaProcessMessage(plainCompose, work);
-  machineConfig.positions[0] = work.positions[0];
-  machineConfig.positions[1] = work.positions[1];
-  machineConfig.positions[2] = work.positions[2];
+  for (uint8_t i = 0; i < compositionStartCount; i++) {
+    machineConfig.slotPos[i] = work.slotPos[i];
+  }
 
   line2Plain = plainCompose;
   line1Cipher = cipher;
@@ -189,18 +226,27 @@ void applyDecryptPayload(const String &payload) {
   }
   if (clean.length() == 0) return;
 
+  if (machineConfig.slotCount == 0) {
+    printLcdLine(2, "Sem rotores");
+    return;
+  }
+
   EnigmaConfig work = machineConfig;
   String plain = enigmaProcessMessage(clean, work);
-  machineConfig.positions[0] = work.positions[0];
-  machineConfig.positions[1] = work.positions[1];
-  machineConfig.positions[2] = work.positions[2];
+  for (uint8_t i = 0; i < work.slotCount; i++) {
+    machineConfig.slotPos[i] = work.slotPos[i];
+  }
 
   line1Cipher = clean;
   line2Plain = plain;
   printLcdLine(0, line1Cipher);
   printLcdLine(1, line2Plain);
   updateRotorLine();
-  setLeds(false, false, true);
+  messageActive = true;
+  refreshModeLeds();
+
+  playDecryptLetterSequence(line2Plain.c_str(), BINARY_LED_DISPLAY_MS, DECRYPT_FINISH_ALL_MS);
+  refreshModeLeds();
 }
 
 void enterDecryptMode() {
@@ -209,7 +255,7 @@ void enterDecryptMode() {
   clearMessageLines();
   printLcdLine(2, "");
   updateRotorLine();
-  setLeds(true, false, false);
+  refreshModeLeds();
   Serial.println(F("MODE:DEC"));
 }
 
@@ -219,49 +265,8 @@ void enterEncryptMode() {
   clearMessageLines();
   printLcdLine(2, "");
   updateRotorLine();
-  setLeds(false, true, false);
+  refreshModeLeds();
   Serial.println(F("MODE:ENC"));
-}
-
-void incrementRotor(uint8_t index) {
-  machineConfig.positions[index] = (machineConfig.positions[index] + 1) % 26;
-  updateRotorLine();
-  if (uiMode == MODE_ENCRYPT && plainCompose.length() > 0) {
-    snapshotCompositionStart();
-    refreshEncryptDisplay();
-  }
-}
-
-bool parsePosLine(const String &line) {
-  int p = line.indexOf("POS:");
-  if (p < 0) return false;
-
-  int r1 = 0, r2 = 0, r3 = 0;
-  int start = p + 4;
-  String rest = line.substring(start);
-  rest.trim();
-
-  int c1 = rest.indexOf(',');
-  if (c1 < 0) return false;
-  int c2 = rest.indexOf(',', c1 + 1);
-  if (c2 < 0) return false;
-
-  r1 = rest.substring(0, c1).toInt();
-  r2 = rest.substring(c1 + 1, c2).toInt();
-  r3 = rest.substring(c2 + 1).toInt();
-
-  machineConfig.positions[0] = constrain(r1, 0, 25);
-  machineConfig.positions[1] = constrain(r2, 0, 25);
-  machineConfig.positions[2] = constrain(r3, 0, 25);
-  updateRotorLine();
-  return true;
-}
-
-void resetRotorsToZero() {
-  machineConfig.positions[0] = 0;
-  machineConfig.positions[1] = 0;
-  machineConfig.positions[2] = 0;
-  updateRotorLine();
 }
 
 void requestSync() {
@@ -270,10 +275,11 @@ void requestSync() {
   syncDeadline = millis() + SYNC_TIMEOUT_MS;
 }
 
-void finishSync(bool gotPos) {
+void finishSync(bool gotCfg) {
   awaitingSyncResponse = false;
-  if (!gotPos) {
-    resetRotorsToZero();
+  if (!gotCfg) {
+    rotorClearAll(machineConfig);
+    updateRotorLine();
     printLcdLine(2, "SYNC: sem resposta");
   } else {
     printLcdLine(2, "SYNC: OK");
@@ -282,30 +288,40 @@ void finishSync(bool gotPos) {
   printLcdLine(2, "");
 }
 
-void handleResetSync() {
+void handleReset() {
   if (uiMode == MODE_ENCRYPT) {
     plainCompose = "";
     clearMessageLines();
-    setLeds(false, true, false);
   } else {
     clearMessageLines();
-    setLeds(true, false, false);
   }
+  rotorClearAll(machineConfig);
+  updateRotorLine();
+  refreshModeLeds();
+}
+
+void handleSync() {
   requestSync();
 }
 
 void handleSend() {
   if (uiMode != MODE_ENCRYPT || plainCompose.length() == 0) return;
+  if (machineConfig.slotCount == 0) {
+    printLcdLine(2, "Sem rotores");
+    return;
+  }
 
   refreshEncryptDisplay();
   Serial.print(F("SEND:"));
   Serial.println(line1Cipher);
-  setLeds(false, true, true);
+  messageActive = true;
+  refreshModeLeds();
 }
 
 void handleSerialLine(const String &line) {
-  if (line.startsWith(F("POS:"))) {
-    if (parsePosLine(line)) {
+  if (line.startsWith(F("CFG:"))) {
+    if (rotorApplyCfgLine(machineConfig, line)) {
+      updateRotorLine();
       finishSync(true);
     }
     return;
@@ -357,7 +373,52 @@ bool isLetter(char key) {
   return (key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z');
 }
 
+bool handleRotorKey(char key) {
+  if (key >= KEY_R1_PLUS && key <= KEY_R6_PLUS) {
+    uint8_t rotorId = (uint8_t)((key - KEY_R1_PLUS) / 2 + 1);
+    rotorIncrementPending(machineConfig, rotorId);
+    updateRotorLine();
+    if (uiMode == MODE_ENCRYPT && plainCompose.length() > 0) {
+      snapshotCompositionStart();
+      refreshEncryptDisplay();
+    }
+    return true;
+  }
+
+  if (key >= KEY_R1 && key <= KEY_R6) {
+    uint8_t rotorId = (uint8_t)((key - KEY_R1) / 2 + 1);
+    if (!rotorToggleSelect(machineConfig, rotorId)) {
+      printLcdLine(2, "Max 4 rotores");
+      delay(600);
+      printLcdLine(2, "");
+    }
+    updateRotorLine();
+    if (uiMode == MODE_ENCRYPT && plainCompose.length() > 0) {
+      snapshotCompositionStart();
+      refreshEncryptDisplay();
+    }
+    return true;
+  }
+
+  if (key >= KEY_S1 && key <= KEY_S4) {
+    uint8_t slotIndex = (uint8_t)(key - KEY_S1);
+    rotorShiftRight(machineConfig, slotIndex);
+    updateRotorLine();
+    if (uiMode == MODE_ENCRYPT && plainCompose.length() > 0) {
+      snapshotCompositionStart();
+      refreshEncryptDisplay();
+    }
+    return true;
+  }
+
+  return false;
+}
+
 void handleKey(char key) {
+  if (key == KEY_NONE) {
+    return;
+  }
+
   if (key == KEY_MODE) {
     if (uiMode == MODE_DECRYPT) {
       enterEncryptMode();
@@ -367,16 +428,22 @@ void handleKey(char key) {
     return;
   }
 
-  if (key == KEY_RESET_SYNC) {
-    handleResetSync();
+  if (key == KEY_RESET) {
+    handleReset();
+    return;
+  }
+
+  if (key == KEY_SYNC) {
+    handleSync();
+    return;
+  }
+
+  if (handleRotorKey(key)) {
     return;
   }
 
   if (uiMode == MODE_DECRYPT) {
-    if (key == KEY_R1) incrementRotor(0);
-    else if (key == KEY_R2) incrementRotor(1);
-    else if (key == KEY_R3) incrementRotor(2);
-    else if (isLetter(key)) {
+    if (isLetter(key)) {
       printLcdLine(2, "DEC: letras inativas");
     }
     return;
@@ -387,46 +454,40 @@ void handleKey(char key) {
     handleSend();
     return;
   }
-  if (key == KEY_R1) incrementRotor(0);
-  else if (key == KEY_R2) incrementRotor(1);
-  else if (key == KEY_R3) incrementRotor(2);
-  else if (isLetter(key)) {
+
+  if (isLetter(key)) {
+    if (machineConfig.slotCount == 0) {
+      printLcdLine(2, "Sem rotores");
+      return;
+    }
     if (plainCompose.length() < MAX_PLAIN_LEN) {
       if (plainCompose.length() == 0) {
         snapshotCompositionStart();
       }
       plainCompose += (char)toupper(key);
       refreshEncryptDisplay();
+      if (line1Cipher.length() > 0) {
+        char lastCipher = line1Cipher.charAt(line1Cipher.length() - 1);
+        showLetterOnBinaryLeds(lastCipher, BINARY_LED_DISPLAY_MS);
+      }
     }
   }
 }
 
 void setup() {
-  pinMode(PIN_LED_DECRYPT, OUTPUT);
-  pinMode(PIN_LED_ENCRYPT, OUTPUT);
-  pinMode(PIN_LED_MESSAGE, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-  setLeds(false, false, false);
-
-  // LEDs ANTES do LCD: se I2C falhar, ainda vemos sinal de vida
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);
-    blinkLed(PIN_LED_DECRYPT, 150);
-    blinkLed(PIN_LED_ENCRYPT, 150);
-    blinkLed(PIN_LED_MESSAGE, 150);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(150);
-  }
+  initAllLeds();
 
   Serial.begin(SERIAL_BAUD);
   delay(500);
   Serial.println(F("ENIGMA: boot"));
+
+  validateModeLeds();
+  selfTestBinaryLeds();
+
   Serial.println(F("Se ve isto, o sketch esta a correr."));
 
-  enigmaSetDefaultOrder(machineConfig);
-  machineConfig.positions[0] = 0;
-  machineConfig.positions[1] = 0;
-  machineConfig.positions[2] = 0;
+  enigmaInitEmpty(machineConfig);
 
   Wire.begin();
   delay(100);
@@ -459,5 +520,11 @@ void loop() {
   if (key2 != NO_KEY) {
     debugKeyPress('2', key2);
     handleKey(key2);
+  }
+
+  char key3 = keypad3.getKey();
+  if (key3 != NO_KEY) {
+    debugKeyPress('3', key3);
+    handleKey(key3);
   }
 }

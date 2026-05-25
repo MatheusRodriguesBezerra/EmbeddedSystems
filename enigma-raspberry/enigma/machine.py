@@ -1,5 +1,5 @@
 from config import ALPHABET, REFLECTOR_B, ROTOR_WIRINGS
-from enigma.models import MachineConfig
+from enigma.models import MachineConfig, RotorSlot
 from enigma.reflector import Reflector
 from enigma.rotor import Rotor
 
@@ -12,41 +12,52 @@ class EnigmaMachine:
         }
         self.reflector = Reflector(REFLECTOR_B)
 
-    def process_message(self, message: str, config: MachineConfig) -> tuple[str, tuple[int, int, int]]:
-        positions = config.positions
+    def process_message(self, message: str, config: MachineConfig) -> tuple[str, list[RotorSlot]]:
+        if not config.slots:
+            raise ValueError("Sem rotores configurados.")
+
+        positions = [slot.position for slot in config.slots]
         output = []
 
         for char in message.upper():
             if char not in ALPHABET:
                 continue
 
-            encoded, positions = self._process_letter(char, config, positions)
+            encoded, positions = self._process_letter(char, config.slots, positions)
             output.append(encoded)
 
-        return "".join(output), positions
+        next_slots = [
+            RotorSlot(id=config.slots[index].id, position=positions[index])
+            for index in range(len(config.slots))
+        ]
+        return "".join(output), next_slots
 
     def _process_letter(
         self,
         letter: str,
-        config: MachineConfig,
-        positions: tuple[int, int, int],
-    ) -> tuple[str, tuple[int, int, int]]:
+        slots: list[RotorSlot],
+        positions: list[int],
+    ) -> tuple[str, list[int]]:
         next_positions = self._step_positions(positions)
         index = ALPHABET.index(letter)
+        count = len(slots)
 
-        for rotor_index in range(2, -1, -1):
-            rotor = self.rotors[config.order[rotor_index]]
+        for rotor_index in range(count - 1, -1, -1):
+            rotor = self.rotors[str(slots[rotor_index].id)]
             index = rotor.forward(index, next_positions[rotor_index])
 
         index = self.reflector.reflect(index)
 
-        for rotor_index in range(3):
-            rotor = self.rotors[config.order[rotor_index]]
+        for rotor_index in range(count):
+            rotor = self.rotors[str(slots[rotor_index].id)]
             index = rotor.backward(index, next_positions[rotor_index])
 
         return ALPHABET[index], next_positions
 
     @staticmethod
-    def _step_positions(positions: tuple[int, int, int]) -> tuple[int, int, int]:
-        first, second, third = positions
-        return first, second, (third + 1) % 26
+    def _step_positions(positions: list[int]) -> list[int]:
+        if not positions:
+            return positions
+        next_positions = list(positions)
+        next_positions[-1] = (next_positions[-1] + 1) % 26
+        return next_positions

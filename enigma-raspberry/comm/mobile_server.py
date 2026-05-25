@@ -58,7 +58,7 @@ def create_app(
         pi_config = config_for_pi_from_app(config)
         updated = store.set_config(pi_config)
         if arduino_handler:
-            arduino_handler.push_positions_to_arduino()
+            arduino_handler.push_config_to_arduino()
         return updated
 
     @app.post("/role")
@@ -79,7 +79,7 @@ def create_app(
             ack = protocol.receive_payload(payload, messageId)
             if arduino_handler:
                 arduino_handler.push_cipher_to_arduino(ack.payload)
-                arduino_handler.push_positions_to_arduino()
+                arduino_handler.push_config_to_arduino()
             return ack
         except ValueError as error:
             logger.warning("GET /message/%s rejeitado: %s", payload, error)
@@ -91,7 +91,7 @@ def create_app(
             ack = protocol.build_outgoing_payload(plain_text)
             if arduino_handler:
                 arduino_handler.push_cipher_to_arduino(ack.payload)
-                arduino_handler.push_positions_to_arduino()
+                arduino_handler.push_config_to_arduino()
             return ack
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

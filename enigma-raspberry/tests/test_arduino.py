@@ -6,7 +6,7 @@ from comm.arduino_handler import ArduinoHandler
 from comm.protocol import MobileProtocol
 from comm.serial_service import SerialService
 from enigma.machine import EnigmaMachine
-from enigma.models import MachineConfig, TransferRole
+from enigma.models import MachineConfig, RotorSlot, TransferRole
 from state.store import StateStore
 
 
@@ -19,9 +19,17 @@ class FakeSerial:
         return True
 
 
+def default_slots() -> list[RotorSlot]:
+    return [
+        RotorSlot(id=1, position=0),
+        RotorSlot(id=2, position=0),
+        RotorSlot(id=3, position=0),
+    ]
+
+
 def make_handler(tmp_path: Path, role: TransferRole = TransferRole.SENDING) -> tuple[ArduinoHandler, StateStore, FakeSerial]:
     store = StateStore(tmp_path / "state.json")
-    store.set_config(MachineConfig(role=role, positions=(0, 0, 0)))
+    store.set_config(MachineConfig(role=role, slots=default_slots()))
     machine = EnigmaMachine()
     protocol = MobileProtocol(store, machine)
     fake_serial = FakeSerial()
@@ -31,18 +39,18 @@ def make_handler(tmp_path: Path, role: TransferRole = TransferRole.SENDING) -> t
     return handler, store, fake_serial
 
 
-def test_sync_responds_with_positions(tmp_path: Path):
+def test_sync_responds_with_cfg(tmp_path: Path):
     handler, _, fake = make_handler(tmp_path)
 
     handler.handle_line("SYNC")
 
-    assert fake.sent == ["POS:0,0,0"]
+    assert fake.sent == ["CFG:1,0,2,0,3,0"]
 
 
 def test_send_from_physical_updates_pending_and_role(tmp_path: Path):
     handler, store, fake = make_handler(tmp_path, TransferRole.SENDING)
     machine = EnigmaMachine()
-    cipher, _ = machine.process_message("OLA", MachineConfig(positions=(0, 0, 0)))
+    cipher, _ = machine.process_message("OLA", MachineConfig(slots=default_slots()))
 
     handler.handle_line(f"SEND:{cipher}")
 
@@ -63,12 +71,12 @@ def test_send_rejected_when_not_sending(tmp_path: Path):
 
 def test_protocol_accept_physical_outgoing(tmp_path: Path):
     store = StateStore(tmp_path / "state.json")
-    store.set_config(MachineConfig(role=TransferRole.SENDING))
+    store.set_config(MachineConfig(role=TransferRole.SENDING, slots=default_slots()))
     protocol = MobileProtocol(store, EnigmaMachine())
     machine = EnigmaMachine()
-    cipher, _ = machine.process_message("HI", MachineConfig())
+    cipher, _ = machine.process_message("HI", MachineConfig(slots=default_slots()))
 
     ack = protocol.accept_physical_outgoing(cipher)
 
-    assert ack.plainText == "HI"
-    assert store.get_pending_outgoing().payload == cipher
+    assert ack.payload == cipher
+    assert ack.plainText == ""

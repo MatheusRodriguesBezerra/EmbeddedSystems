@@ -1,10 +1,14 @@
 from comm.protocol import config_for_pi_from_app
-from enigma.models import MachineConfig, TransferRole
+from enigma.models import MachineConfig, RotorSlot, TransferRole
 
 
 def test_config_maps_app_sending_to_pi_receiving():
     app_config = MachineConfig(
-        positions=(4, 6, 8),
+        slots=[
+            RotorSlot(id=1, position=4),
+            RotorSlot(id=2, position=6),
+            RotorSlot(id=3, position=8),
+        ],
         mode="DEC",
         role=TransferRole.SENDING,
     )
@@ -12,7 +16,7 @@ def test_config_maps_app_sending_to_pi_receiving():
     pi_config = config_for_pi_from_app(app_config)
 
     assert pi_config.role == TransferRole.RECEIVING
-    assert pi_config.positions == (4, 6, 8)
+    assert pi_config.slots[0].position == 4
 
 
 def test_config_maps_app_receiving_to_pi_sending():

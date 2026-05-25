@@ -7,6 +7,7 @@ from enigma.models import (
     MachineConfig,
     MachineState,
     PendingOutgoing,
+    RotorSlot,
     StoredState,
     TransferRole,
 )
@@ -38,14 +39,14 @@ class StateStore:
                 connectedArduino=self._state.connectedArduino,
             )
 
-    def set_positions_and_role(
+    def set_slots_and_role(
         self,
-        positions: tuple[int, int, int],
+        slots: list[RotorSlot],
         role: TransferRole,
     ) -> MachineState:
         with self._lock:
             self._state.config = self._state.config.model_copy(
-                update={"positions": positions, "role": role}
+                update={"slots": slots, "role": role}
             )
             self._save()
             return MachineState(
@@ -75,12 +76,10 @@ class StateStore:
         self,
         payload: str,
         message_id: str,
-        plain_text: str,
     ) -> None:
         with self._lock:
             self._state.pendingPayload = payload
             self._state.pendingMessageId = message_id
-            self._state.pendingPlainText = plain_text
             self._save()
 
     def get_pending_outgoing(self) -> PendingOutgoing:
@@ -91,8 +90,7 @@ class StateStore:
                 available=True,
                 payload=self._state.pendingPayload,
                 messageId=self._state.pendingMessageId,
-                plainText=self._state.pendingPlainText,
-                positions=self._state.config.positions,
+                slots=[slot.model_copy() for slot in self._state.config.slots],
                 role=self._state.config.role,
             )
 
@@ -105,13 +103,11 @@ class StateStore:
                     available=True,
                     payload=self._state.pendingPayload,
                     messageId=self._state.pendingMessageId,
-                    plainText=self._state.pendingPlainText,
-                    positions=self._state.config.positions,
+                    slots=[slot.model_copy() for slot in self._state.config.slots],
                     role=self._state.config.role,
                 )
             self._state.pendingPayload = ""
             self._state.pendingMessageId = ""
-            self._state.pendingPlainText = ""
             self._save()
             return pending
 
@@ -120,7 +116,29 @@ class StateStore:
             return StoredState()
 
         with self.path.open("r", encoding="utf-8") as file:
-            return StoredState.model_validate(json.load(file))
+            raw = json.load(file)
+
+        # Migra estado antigo order/positions -> slots
+        config = raw.get("config", {})
+        if "order" in config and "slots" not in config:
+            roman_map = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
+            order = config.get("order", ["I", "II", "III"])
+            positions = config.get("positions", [0, 0, 0])
+            config["slots"] = [
+                {"id": roman_map.get(rotor, 1), "position": positions[index]}
+                for index, rotor in enumerate(order)
+            ]
+            config.pop("order", None)
+            config.pop("positions", None)
+            raw["config"] = config
+
+        if "history" in raw:
+            for item in raw["history"]:
+                if "positions" in item and "slots" not in item:
+                    item["slots"] = []
+                    item.pop("positions", None)
+
+        return StoredState.model_validate(raw)
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
