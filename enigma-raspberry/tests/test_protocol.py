@@ -15,9 +15,9 @@ def default_slots() -> list[RotorSlot]:
     ]
 
 
-def test_relay_mobile_outgoing_requires_sending_role(tmp_path: Path):
+def test_relay_mobile_outgoing_requires_receiving_role(tmp_path: Path):
     store = StateStore(tmp_path / "state.json")
-    store.set_config(MachineConfig(role=TransferRole.RECEIVING, slots=default_slots()))
+    store.set_config(MachineConfig(role=TransferRole.SENDING, slots=default_slots()))
     protocol = MobileProtocol(store)
 
     with pytest.raises(ValueError):
@@ -26,15 +26,15 @@ def test_relay_mobile_outgoing_requires_sending_role(tmp_path: Path):
 
 def test_relay_mobile_outgoing_flips_role_without_changing_slots(tmp_path: Path):
     store = StateStore(tmp_path / "state.json")
-    store.set_config(MachineConfig(role=TransferRole.SENDING, slots=default_slots()))
+    store.set_config(MachineConfig(role=TransferRole.RECEIVING, slots=default_slots()))
     protocol = MobileProtocol(store)
 
     ack = protocol.relay_cipher_from_mobile("XYZ", "msg-1")
 
     assert ack.payload == "XYZ"
-    assert ack.role == TransferRole.RECEIVING
+    assert ack.role == TransferRole.SENDING
     assert store.get_config().slots == default_slots()
-    assert store.get_config().role == TransferRole.RECEIVING
+    assert store.get_config().role == TransferRole.SENDING
 
 
 def test_relay_arduino_outgoing_sets_pending(tmp_path: Path):

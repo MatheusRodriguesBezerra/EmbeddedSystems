@@ -61,8 +61,8 @@ class MobileProtocol:
             raise ValueError("Payload vazio ou sem caracteres A-Z.")
 
         config = self.store.get_config()
-        if config.role != TransferRole.SENDING:
-            raise ValueError("Raspberry nao esta em SENDING.")
+        if config.role != TransferRole.RECEIVING:
+            raise ValueError("Raspberry nao esta em RECEIVING.")
 
         resolved_message_id = message_id or str(uuid4())
         if self.store.has_processed(resolved_message_id):
