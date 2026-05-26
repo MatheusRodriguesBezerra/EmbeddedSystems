@@ -1,63 +1,142 @@
 # Enigma Raspberry
 
-Backend Python para o Raspberry Pi do projeto Enigma Machine.
+Backend Python (FastAPI) para o Raspberry Pi do projeto Enigma Machine.
 
-## Funcionalidades
+## Responsabilidades
 
-- API HTTP local com FastAPI.
-- Cifra Enigma simplificada com rotores fixos I, II e III.
-- Refletor B.
-- Estado half-duplex: `IDLE`, `SENDING`, `RECEIVING`.
-- Sincronização de configuração por `POST /config`.
-- Receção de payload cifrado por `GET /message/:payload`.
-- Persistência de estado em `state/enigma_state.json`.
-- Ponte Serial preparada para comandos do Arduino.
-- Testes unitários mínimos.
+- Atuar como **ponte** entre o app mobile (HTTP) e o Arduino (USB Serial).
+- Manter a **última configuração de rotores** enviada pelo app mobile, para que o Arduino a possa consultar via `SYNC`.
+- Manter a **última cifra recebida do Arduino** (`MESSAGEFROMARDUINO:`) até o app mobile a consumir via `GET /has-message`.
+- Encaminhar a cifra recebida do app mobile (`GET /message/:cipher`) para o Arduino como `MESSAGEFROMMOBILE:<cipher>`.
+
+> O Raspberry **não cifra nem decifra**. As máquinas Enigma vivem no Arduino e no app; o backend só transporta payloads cifrados e configurações.
 
 ## Rotas HTTP
 
-- `GET /ping`
-- `GET /state`
-- `POST /config`
-- `GET /message/{payload}`
-- `GET /pending` — payload cifrado enviado pelo Arduino (app em RECEIVING)
-- `POST /outgoing/{plain_text}`
+Todas as rotas devolvem JSON. A base é `http://<IP_DO_RASPBERRY>:8000`.
 
-## Arduino por USB Serial
+### `GET /ping`
 
-O `main.py` abre automaticamente `/dev/ttyACM0` a 115200 baud e faz ponte com o firmware.
+Teste de conectividade.
 
-Ver **[CONEXAO_PI.md](CONEXAO_PI.md)** para ligacao completa Arduino + Pi + app mobile.
+```json
+{
+  "status": "ok",
+  "connectedArduino": true
+}
+```
 
-## Contrato com o app
+### `POST /config`
 
-O app deve chamar `GET /message/{payload}` apenas quando o Raspberry estiver em `RECEIVING`. O payload recebido já deve estar cifrado pela Enigma no app. O Raspberry decifra localmente, atualiza as posições dos rotores e alterna para `SENDING`.
+Armazena a configuração atual de rotores enviada pelo app mobile.
+
+Payload:
+
+```json
+{
+  "rotors": [
+    { "id": 1, "position": 5 },
+    { "id": 3, "position": 3 },
+    { "id": 4, "position": 10 }
+  ]
+}
+```
+
+Resposta:
+
+```json
+{
+  "rotors": [
+    { "id": 1, "position": 5 },
+    { "id": 3, "position": 3 },
+    { "id": 4, "position": 10 }
+  ],
+  "connectedArduino": true
+}
+```
+
+### `GET /message/:cipher`
+
+Recebe uma cifra do app mobile e envia ao Arduino como `MESSAGEFROMMOBILE:<cipher>` pela Serial.
+
+Resposta:
+
+```json
+{
+  "status": "received",
+  "cipher": "XYZ"
+}
+```
+
+### `GET /has-message`
+
+Consultada pelo app mobile (a cada 4 s no modo DECIFRAR). Devolve a última cifra recebida do Arduino e limpa o buffer, ou `null` se não houver cifra nova.
+
+Resposta com mensagem disponível:
+
+```json
+{
+  "cipher": "QWE"
+}
+```
+
+Resposta sem mensagem:
+
+```json
+{
+  "cipher": null
+}
+```
+
+## Protocolo serial Arduino ↔ Raspberry
+
+USB Serial @ 115200 baud, linhas terminadas em `\n`.
+
+### Arduino → Raspberry Pi
+
+| Comando                       | Tratamento no Raspberry                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| `MESSAGEFROMARDUINO:<cipher>` | Armazena a cifra como mensagem pendente para o app mobile (`GET /has-message`).  |
+| `SYNC`                        | Responde com `POS:<r1,pos>,<r2,pos>,...` (configuração atual armazenada).        |
+| `STATUS`                      | Responde com `STATUS:OK`.                                                        |
+
+### Raspberry Pi → Arduino
+
+| Linha enviada                 | Quando                                                                |
+| ----------------------------- | --------------------------------------------------------------------- |
+| `POS:<r1,pos>,<r2,pos>,...`   | Resposta ao `SYNC`. Se não houver rotores, envia `POS:` (vazio).      |
+| `STATUS:OK`                   | Resposta ao `STATUS`.                                                 |
+| `MESSAGEFROMMOBILE:<cipher>`  | Sempre que chega `GET /message/:cipher`.                              |
+
+## Arquitetura
+
+```
+state/store.py       -> persistência em ficheiro JSON
+enigma/models.py     -> modelos pydantic (RotorSlot, Config, etc.)
+comm/serial_service  -> leitura/escrita USB Serial em thread dedicada
+comm/arduino_handler -> traduz linhas do Arduino em ações de estado/serial
+comm/mobile_server   -> FastAPI com as rotas /ping, /config, /message, /has-message
+main.py              -> ponto de entrada uvicorn
+```
 
 ## Execução
 
-No Raspberry Pi OS (Debian), **não use** `pip install` no Python do sistema — aparece `externally-managed-environment`. Use um ambiente virtual:
+No Raspberry Pi OS (Debian) é necessário ambiente virtual (o sistema bloqueia `pip` global):
 
 ```bash
 cd ~/EmbeddedSystems/enigma-raspberry
 
-# Dependencias do sistema (so na primeira vez)
 sudo apt update
 sudo apt install python3-venv python3-full
 
-# Ambiente virtual (so na primeira vez)
 python3 -m venv .venv
-
-# Ativar o venv (obrigatorio em cada sessao SSH)
 source .venv/bin/activate
-
-# Instalar pacotes dentro do venv
 pip install -r requirements.txt
 
-# Arrancar
 python main.py
 ```
 
-O prompt deve mostrar `(.venv)` antes de instalar ou correr o servidor.
+O Arduino deve estar ligado em `/dev/ttyACM0` (ajustável via variável de ambiente `ENIGMA_SERIAL_PORT`).
 
 No app mobile, configure o endereço do Raspberry como `IP_DO_RASPBERRY:8000`.
 
@@ -67,4 +146,7 @@ Significa que correu `pip install` **fora** do venv. Execute `source .venv/bin/a
 
 ## Testes
 
-Execute `pytest` na raiz deste projeto.
+```bash
+source .venv/bin/activate
+pytest
+```

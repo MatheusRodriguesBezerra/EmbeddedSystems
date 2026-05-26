@@ -1,24 +1,21 @@
 # Conexao Arduino + Raspberry Pi + App Mobile
 
-Este guia liga as tres partes do projeto Enigma Machine.
+Guia operacional para ligar as tres partes do projeto Enigma Machine.
 
 ## Arquitetura
 
 ```text
 [App Mobile]  <-- Wi-Fi HTTP -->  [Raspberry Pi]  <-- USB Serial -->  [Arduino Mega]
-     |                                   |
-  cifra/decifra local              estado central + ponte
-  (enigmaMachine.ts)               (enigma-raspberry)
-                                         |
-                                   Arduino cifra/decifra
-                                   localmente (LCD/LEDs)
+     |                                   |                                   |
+  cifra/decifra local                ponte / armazenamento                cifra/decifra local
+  (enigma-mobile)                    (enigma-raspberry)                   (enigma-arduino)
 ```
 
-O Raspberry Pi **nao re-cifra** mensagens ja cifradas no Arduino ou no app. Ele:
+O Raspberry Pi **nao cifra nem decifra**. As maquinas Enigma vivem no Arduino e no app; o backend so:
 
-1. Mantem o **estado** (rotores, turno, modo).
-2. **Encaminha** payloads entre Serial e HTTP.
-3. **Alinha posicoes** dos rotores processando o payload (Enigma simetrica).
+1. Mantem a **ultima configuracao de rotores** vinda do app (para o Arduino consultar com `SYNC`).
+2. Armazena a **ultima cifra** vinda do Arduino ate o app pedir em `GET /has-message`.
+3. **Encaminha** cifras do app para o Arduino via `MESSAGEFROMMOBILE:`.
 
 ---
 
@@ -26,17 +23,15 @@ O Raspberry Pi **nao re-cifra** mensagens ja cifradas no Arduino ou no app. Ele:
 
 ### Cabo
 
-- Arduino Mega **USB** -> porta USB do Raspberry Pi 3 B+
-- Alimentacao: USB do Pi alimenta o Mega (consumo moderado)
+- Arduino Mega **USB** -> porta USB do Raspberry Pi
+- O USB do Pi alimenta o Mega
 
 ### Firmware
 
 1. Carregue `enigma-arduino/enigma_machine/enigma_machine.ino` no Mega.
-2. Serial a **115200 baud** (igual ao `config.h` do Arduino e ao Pi).
+2. Serial a **115200 baud**.
 
 ### Porta Serial no Pi
-
-Com o Arduino ligado:
 
 ```bash
 ls -l /dev/ttyACM* /dev/ttyUSB*
@@ -64,16 +59,15 @@ Deve aparecer `ENIGMA: boot`. Ctrl+] para sair.
 
 ## 2. Backend no Raspberry Pi
 
-### Instalacao
-
 ```bash
 cd enigma-raspberry
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python main.py
 ```
 
-### Variaveis (opcional)
+Variaveis opcionais:
 
 ```bash
 export ENIGMA_SERIAL_PORT=/dev/ttyACM0
@@ -81,64 +75,46 @@ export ENIGMA_SERIAL_BAUD=115200
 export ENIGMA_SERIAL_ENABLED=1
 ```
 
-Use `ENIGMA_SERIAL_ENABLED=0` para correr so HTTP sem Arduino.
+Use `ENIGMA_SERIAL_ENABLED=0` para correr so o HTTP sem Arduino (testes).
 
-### Executar
+Servidor HTTP: `http://IP_DO_PI:8000`.
 
-```bash
-python main.py
-```
-
-Servidor HTTP: `http://IP_DO_PI:8000`
-
-`GET /ping` deve responder:
-
-```json
-{ "status": "ok", "connectedArduino": true }
-```
+`GET /ping` deve responder `{"status": "ok", "connectedArduino": true}` (ou `false` se o Arduino nao estiver ligado).
 
 ---
 
 ## 3. Protocolo Serial (Arduino <-> Pi)
 
+Linhas terminadas em `\n`, ASCII, 115200 baud.
+
 ### Arduino -> Pi
 
-| Comando | Quando |
-| --- | --- |
-| `SYNC` | Tecla RESET/SYNC |
-| `SEND:<cipher>` | Tecla SEND (modo cifrar) |
-| `MODE:ENC` / `MODE:DEC` | Tecla MODE |
+| Comando                       | Quando                                              |
+| ----------------------------- | --------------------------------------------------- |
+| `SYNC`                        | Tecla `SYNC` no Arduino                             |
+| `STATUS`                      | Pedido de keepalive / verificacao                   |
+| `MESSAGEFROMARDUINO:<cipher>` | Tecla `SEND` em modo CIFRAR (apos `LOCK`)           |
 
 ### Pi -> Arduino
 
-| Resposta | Significado |
-| --- | --- |
-| `POS:r1,r2,r3` | Posicoes dos rotores (sync) |
-| `IN:<cipher>` | Payload cifrado para decifrar no LCD |
-| `ACK:<messageId>` | SEND aceite |
-| `ERR:<codigo>` | Erro (ex.: `NOT_SENDING`) |
+| Linha enviada                | Quando                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `POS:<r1,p1,r2,p2,...>`      | Resposta ao `SYNC` (vazio = `POS:`)                                     |
+| `STATUS:OK`                  | Resposta ao `STATUS`                                                    |
+| `MESSAGEFROMMOBILE:<cipher>` | Sempre que chega `GET /message/:cipher` do app mobile                    |
+| `ACK:<cipher>`               | Confirmacao de `MESSAGEFROMARDUINO:` aceite                              |
+| `ERR:<codigo>`               | Erro (ex.: `ERR:PAYLOAD_VAZIO`)                                          |
 
 ---
 
 ## 4. API HTTP (Pi <-> App Mobile)
 
-| Rota | Funcao |
-| --- | --- |
-| `GET /ping` | Conectividade + Arduino ligado |
-| `GET /state` | Estado completo + `pending` |
-| `POST /config` | Sincronizar rotores, posicoes, modo, **role** |
-| `GET /message/{payload}` | App envia payload **ja cifrado** (app em SENDING) |
-| `GET /pending` | App recebe payload cifrado da maquina fisica |
-| `POST /outgoing/{texto}` | Pi cifra texto (teste sem Arduino) |
-
-### Turno half-duplex (`role`)
-
-| Role no Pi | Quem pode enviar |
-| --- | --- |
-| `SENDING` | Maquina fisica (Arduino SEND) |
-| `RECEIVING` | App mobile (`GET /message/...`) |
-
-Apos cada mensagem processada, o role **alterna** automaticamente.
+| Rota                     | Funcao                                                                  |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `GET /ping`              | Estado do backend e do Arduino                                          |
+| `POST /config`           | App envia a configuracao atual `{ rotors: [{id, position}, ...] }`      |
+| `GET /message/{cipher}`  | App envia cifra; Pi reenvia ao Arduino via `MESSAGEFROMMOBILE:`         |
+| `GET /has-message`       | App faz polling a cada 4 s; devolve `{cipher: "..."}` ou `{cipher: null}` |
 
 ---
 
@@ -146,72 +122,57 @@ Apos cada mensagem processada, o role **alterna** automaticamente.
 
 ### A) App envia mensagem para a maquina fisica
 
-**Pre-condicao:** Pi em `RECEIVING`, app em `SENDING`, mesmas posicoes (ex.: `0,0,0`).
+**Pre-condicao:** App e Arduino com a mesma configuracao de rotores.
 
-1. App cifra `"OLA"` localmente -> ex.: `"PKN"`
-2. App chama `GET http://PI:8000/message/PKN`
-3. Pi decifra (alinha rotores), role passa a `SENDING`
-4. Pi envia ao Arduino: `IN:PKN`
-5. Arduino (modo decifrar) mostra cifrado na linha 1 e claro na linha 2
+1. App esta em modo CIFRAR. Utilizador digita "OLA".
+2. App cifra localmente -> ex.: "PKN".
+3. App chama `GET http://PI:8000/message/PKN`.
+4. Pi envia ao Arduino: `MESSAGEFROMMOBILE:PKN`.
+5. Arduino (em DECIFRAR, com LOCK ativo) decifra, mostra a cifra na linha 1 do LCD e o claro na linha 2; pisca L1-L5 a cada letra (1200 ms).
 
 ### B) Maquina fisica envia mensagem para o app
 
-**Pre-condicao:** Pi em `SENDING`, app em `RECEIVING`.
+**Pre-condicao:** App em DECIFRAR, Arduino em CIFRAR com mesma configuracao.
 
-1. No Arduino: MODE -> cifrar, digitar `OLA`, SEND
-2. Arduino envia `SEND:<cipher>` ao Pi
-3. Pi responde `ACK:<id>`, guarda payload, role passa a `RECEIVING`
-4. App faz polling: `GET http://PI:8000/pending`
-5. App decifra localmente o `payload`
+1. No Arduino: configura rotores, pressiona LOCK, digita "OLA".
+2. Pressiona SEND -> Arduino envia `MESSAGEFROMARDUINO:<cipher>`.
+3. Pi armazena o cipher como pendente e responde `ACK:<cipher>`.
+4. App faz `GET /has-message` (polling 4 s). Pi devolve `{"cipher": "<cipher>"}` e limpa o buffer.
+5. App decifra localmente e mostra o claro ao utilizador.
 
-### C) Sincronizar antes de comecar
+### C) Sincronizar configuracao
 
-**POST /config** (app ou curl):
-
-```json
-{
-  "order": ["I", "II", "III"],
-  "positions": [0, 0, 0],
-  "mode": "DEC",
-  "role": "SENDING"
-}
-```
-
-**No Arduino:** tecla RESET/SYNC -> Pi responde `POS:0,0,0`
-
-Para a maquina fisica enviar primeiro: Pi `role: "SENDING"`, app `role: "RECEIVING"`.
-
-Para o app enviar primeiro: Pi `role: "RECEIVING"`, app `role: "SENDING"`.
+1. No app, escolher os rotores -> `POST /config` (`{"rotors": [{"id": 1, "position": 5}, ...]}`).
+2. No Arduino, pressionar `SYNC` -> Pi responde `POS:1,5,...`.
 
 ---
 
 ## 6. App mobile (`enigma-mobile`)
 
-Configure o IP do Pi na tela Config (ex.: `192.168.1.50:8000`).
+Configure o IP do Pi nas configuracoes (ex.: `192.168.1.50:8000`).
 
 ```typescript
 GET /ping
-POST /config  { order, positions, mode, role }
+POST /config  { rotors: [...] }
 
-// App envia (SENDING)
+// App envia (modo CIFRAR)
 const cipher = enigma.encrypt(plain);
 GET /message/${cipher}
 
-// App recebe da maquina fisica (RECEIVING)
-GET /pending?consume=true
-const plain = enigma.decrypt(response.payload);
+// App recebe (modo DECIFRAR, polling 4 s)
+GET /has-message
+// -> { cipher: "..." | null }
+const plain = enigma.decrypt(response.cipher);
 ```
-
-Em `RECEIVING`, faca polling periodico em `GET /pending` ou consulte `GET /state` (`pending.available`).
 
 ---
 
 ## 7. Ordem de arranque
 
-1. Ligar Raspberry Pi (Wi-Fi ativo)
-2. Ligar Arduino ao Pi por USB
-3. `python main.py` no Pi
-4. Confirmar `/ping` com `connectedArduino: true`
-5. `POST /config` com roles alinhados
-6. RESET/SYNC no Arduino
-7. Abrir app mobile na mesma rede Wi-Fi
+1. Ligar Raspberry Pi (Wi-Fi ativo).
+2. Ligar Arduino ao Pi por USB.
+3. `python main.py` no Pi.
+4. Confirmar `/ping` com `connectedArduino: true`.
+5. No app, configurar IP e rotores -> `POST /config`.
+6. No Arduino, pressionar `SYNC` para receber a configuracao.
+7. Pressionar `LOCK` no Arduino e comecar a comunicar.

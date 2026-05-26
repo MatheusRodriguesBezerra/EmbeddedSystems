@@ -1,4 +1,3 @@
-from .machine import EnigmaMachine
-from .models import MachineConfig, MachineState
+from .models import MachineConfig, MachineState, RotorSlot
 
-__all__ = ["EnigmaMachine", "MachineConfig", "MachineState"]
+__all__ = ["MachineConfig", "MachineState", "RotorSlot"]

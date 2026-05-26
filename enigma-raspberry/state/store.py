@@ -2,18 +2,12 @@ import json
 from pathlib import Path
 from threading import Lock
 
-from enigma.models import (
-    HistoryItem,
-    MachineConfig,
-    MachineState,
-    PendingOutgoing,
-    RotorSlot,
-    StoredState,
-    TransferRole,
-)
+from enigma.models import MachineConfig, MachineState, StoredState
 
 
 class StateStore:
+    """Estado partilhado entre HTTP e Serial. Persistido em ficheiro JSON."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = Lock()
@@ -26,7 +20,7 @@ class StateStore:
     def get_machine_state(self) -> MachineState:
         with self._lock:
             return MachineState(
-                **self._state.config.model_dump(),
+                rotors=self._state.config.rotors,
                 connectedArduino=self._state.connectedArduino,
             )
 
@@ -35,22 +29,7 @@ class StateStore:
             self._state.config = config
             self._save()
             return MachineState(
-                **config.model_dump(),
-                connectedArduino=self._state.connectedArduino,
-            )
-
-    def set_slots_and_role(
-        self,
-        slots: list[RotorSlot],
-        role: TransferRole,
-    ) -> MachineState:
-        with self._lock:
-            self._state.config = self._state.config.model_copy(
-                update={"slots": slots, "role": role}
-            )
-            self._save()
-            return MachineState(
-                **self._state.config.model_dump(),
+                rotors=config.rotors,
                 connectedArduino=self._state.connectedArduino,
             )
 
@@ -59,84 +38,60 @@ class StateStore:
             self._state.connectedArduino = connected
             self._save()
 
-    def add_history(self, item: HistoryItem) -> None:
+    def set_pending_cipher(self, cipher: str) -> None:
         with self._lock:
-            self._state.history = [item, *self._state.history][:50]
-            self._state.processedMessageIds = [
-                item.messageId,
-                *self._state.processedMessageIds,
-            ][:100]
+            self._state.pendingCipher = cipher
             self._save()
 
-    def has_processed(self, message_id: str) -> bool:
+    def get_pending_cipher(self) -> str:
         with self._lock:
-            return message_id in self._state.processedMessageIds
+            return self._state.pendingCipher
 
-    def set_pending_outgoing(
-        self,
-        payload: str,
-        message_id: str,
-    ) -> None:
+    def consume_pending_cipher(self) -> str | None:
+        """Devolve a cifra pendente (e limpa-a). None se nao houver."""
         with self._lock:
-            self._state.pendingPayload = payload
-            self._state.pendingMessageId = message_id
+            cipher = self._state.pendingCipher
+            if not cipher:
+                return None
+            self._state.pendingCipher = ""
             self._save()
-
-    def get_pending_outgoing(self) -> PendingOutgoing:
-        with self._lock:
-            if not self._state.pendingPayload:
-                return PendingOutgoing()
-            return PendingOutgoing(
-                available=True,
-                payload=self._state.pendingPayload,
-                messageId=self._state.pendingMessageId,
-                role=self._state.config.role,
-            )
-
-    def clear_pending_outgoing(self) -> PendingOutgoing:
-        with self._lock:
-            if not self._state.pendingPayload:
-                pending = PendingOutgoing()
-            else:
-                pending = PendingOutgoing(
-                    available=True,
-                    payload=self._state.pendingPayload,
-                    messageId=self._state.pendingMessageId,
-                    role=self._state.config.role,
-                )
-            self._state.pendingPayload = ""
-            self._state.pendingMessageId = ""
-            self._save()
-            return pending
+            return cipher
 
     def _load(self) -> StoredState:
         if not self.path.exists():
             return StoredState()
 
-        with self.path.open("r", encoding="utf-8") as file:
-            raw = json.load(file)
+        try:
+            with self.path.open("r", encoding="utf-8") as file:
+                raw = json.load(file)
+        except (json.JSONDecodeError, OSError):
+            return StoredState()
 
-        # Migra estado antigo order/positions -> slots
-        config = raw.get("config", {})
-        if "order" in config and "slots" not in config:
-            roman_map = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
-            order = config.get("order", ["I", "II", "III"])
-            positions = config.get("positions", [0, 0, 0])
-            config["slots"] = [
-                {"id": roman_map.get(rotor, 1), "position": positions[index]}
-                for index, rotor in enumerate(order)
-            ]
-            config.pop("order", None)
-            config.pop("positions", None)
-            raw["config"] = config
+        config_raw = raw.get("config", {})
 
-        if "history" in raw:
-            for item in raw["history"]:
-                if "positions" in item and "slots" not in item:
-                    item["slots"] = []
-                    item.pop("positions", None)
+        # Migra formatos antigos para o novo (rotors).
+        if "rotors" not in config_raw:
+            if "slots" in config_raw:
+                config_raw["rotors"] = config_raw.pop("slots")
+            elif "order" in config_raw:
+                roman_map = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
+                order = config_raw.get("order", [])
+                positions = config_raw.get("positions", [])
+                config_raw["rotors"] = [
+                    {"id": roman_map.get(item, 1), "position": positions[index] if index < len(positions) else 0}
+                    for index, item in enumerate(order)
+                ]
+            else:
+                config_raw["rotors"] = []
+        # Remove campos legacy.
+        for legacy in ("mode", "role", "order", "positions", "slots"):
+            config_raw.pop(legacy, None)
 
-        return StoredState.model_validate(raw)
+        return StoredState(
+            config=MachineConfig.model_validate({"rotors": config_raw.get("rotors", [])}),
+            connectedArduino=bool(raw.get("connectedArduino", False)),
+            pendingCipher=str(raw.get("pendingCipher", raw.get("pendingPayload", ""))),
+        )
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

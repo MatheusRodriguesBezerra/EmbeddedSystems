@@ -6,37 +6,40 @@
 // LEDs de modo
 #define PIN_LED_DECRYPT 48
 #define PIN_LED_ENCRYPT 50
-#define PIN_LED_MESSAGE 2   // header A0 (= digital 54); substitui 52/SCK
+#define PIN_LED_MESSAGE 2
 
 // LEDs binarios L1..L5 (valor da letra A=1 .. Z=26)
 #define PIN_LED_L1 46
 #define PIN_LED_L2 47
 #define PIN_LED_L3 49
 #define PIN_LED_L4 51
-#define PIN_LED_L5 3         // header A1 (= digital 55); substitui 53/SS
+#define PIN_LED_L5 3
 
-#define BINARY_LED_DISPLAY_MS 2000
+#define BINARY_LED_DISPLAY_MS 1200
 #define DECRYPT_FINISH_ALL_MS 5000
+#define SEND_MESSAGE_LED_MS 4000
 
-// LCD I2C (ajuste o endereco se necessario: 0x27 ou 0x3F)
+// LCD I2C
 #define LCD_I2C_ADDR 0x27
 #define LCD_COLS 20
 #define LCD_ROWS 4
 
-// Keypad 1: 22-29 | Keypad 2: 30-37 | Keypad 3: 38-45 | I2C: 20-21
-
+// Limites
 #define MAX_PLAIN_LEN 20
 #define MAX_ACTIVE_ROTORS 4
 #define ROTOR_POOL_SIZE 6
 #define SERIAL_BAUD 115200
 #define SYNC_TIMEOUT_MS 1500
 
+// Teclas de comando
 #define KEY_SEND 0x11
 #define KEY_MODE 0x12
+#define KEY_LOCK 0x13
 #define KEY_RESET 0x16
 #define KEY_SYNC 0x17
 #define KEY_NONE 0x00
 
+// Teclas de rotor / shifter
 #define KEY_R1_PLUS 0x21
 #define KEY_R1 0x22
 #define KEY_R2_PLUS 0x23

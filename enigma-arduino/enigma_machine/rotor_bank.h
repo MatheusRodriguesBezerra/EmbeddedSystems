@@ -10,6 +10,6 @@ bool rotorToggleSelect(EnigmaConfig &config, uint8_t rotorId);
 void rotorIncrementPending(EnigmaConfig &config, uint8_t rotorId);
 void rotorShiftRight(EnigmaConfig &config, uint8_t slotIndex);
 void rotorClearAll(EnigmaConfig &config);
-bool rotorApplyCfgLine(EnigmaConfig &config, const String &line);
+bool rotorApplyPosLine(EnigmaConfig &config, const String &line);
 
 #endif

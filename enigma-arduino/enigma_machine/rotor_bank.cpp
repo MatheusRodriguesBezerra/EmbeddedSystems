@@ -103,8 +103,8 @@ void rotorClearAll(EnigmaConfig &config) {
   enigmaInitEmpty(config);
 }
 
-bool rotorApplyCfgLine(EnigmaConfig &config, const String &line) {
-  int p = line.indexOf("CFG:");
+bool rotorApplyPosLine(EnigmaConfig &config, const String &line) {
+  int p = line.indexOf("POS:");
   if (p < 0) return false;
 
   String rest = line.substring(p + 4);
